@@ -17,12 +17,6 @@ QMainWindow, QDialog {
     min-width: 168px;
     max-width: 168px;
 }
-#SidebarTitle {
-    color: #f9fafb;
-    font-size: 16px;
-    font-weight: bold;
-    padding: 20px 16px 14px 16px;
-}
 QPushButton[sidebar="true"] {
     color: #d1d5db;
     background: transparent;

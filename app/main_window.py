@@ -4,7 +4,6 @@ from __future__ import annotations
 from PySide6.QtWidgets import (
     QButtonGroup,
     QHBoxLayout,
-    QLabel,
     QMainWindow,
     QPushButton,
     QStackedWidget,
@@ -38,11 +37,8 @@ class MainWindow(QMainWindow):
         sidebar = QWidget()
         sidebar.setObjectName("Sidebar")
         side_layout = QVBoxLayout(sidebar)
-        side_layout.setContentsMargins(0, 0, 0, 0)
+        side_layout.setContentsMargins(0, 12, 0, 0)
         side_layout.setSpacing(2)
-        app_title = QLabel("✓ 업무 체크리스트")
-        app_title.setObjectName("SidebarTitle")
-        side_layout.addWidget(app_title)
 
         self.nav_group = QButtonGroup(self)
         self.nav_buttons: list[QPushButton] = []

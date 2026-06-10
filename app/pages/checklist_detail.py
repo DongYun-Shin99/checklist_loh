@@ -1,8 +1,7 @@
-"""체크리스트 상세 화면: 항목 체크, 경로 열기, 메모."""
+"""체크리스트 상세 화면: 항목 체크, 경로 열기, 메모. 기한은 패치를 따른다."""
 from __future__ import annotations
 
 import os
-from datetime import datetime
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -11,7 +10,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QProgressBar,
     QPushButton,
     QScrollArea,
@@ -19,10 +17,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..models import Checklist, ChecklistItem, STATUS_DONE, STATUS_IN_PROGRESS
+from ..models import Checklist, ChecklistItem, Patch, STATUS_DONE, STATUS_IN_PROGRESS
 from ..storage import Storage
 from ..utils import dday_info, open_in_explorer
-from .checklists import country_badge
+from ..widgets import country_badge
 
 
 class ItemRow(QFrame):
@@ -107,11 +105,12 @@ class ItemRow(QFrame):
 
 class ChecklistDetailPage(QWidget):
     backRequested = Signal()
-    archivedChanged = Signal()
+    checklistCompleted = Signal()  # 마지막 항목 완료 시 (패치 보관 여부 확인용)
 
     def __init__(self, storage: Storage):
         super().__init__()
         self.storage = storage
+        self.patch: Patch | None = None
         self.checklist: Checklist | None = None
 
         layout = QVBoxLayout(self)
@@ -154,7 +153,8 @@ class ChecklistDetailPage(QWidget):
         scroll.setWidget(self.items_host)
         layout.addWidget(scroll, 1)
 
-    def set_checklist(self, checklist: Checklist) -> None:
+    def set_checklist(self, patch: Patch, checklist: Checklist) -> None:
+        self.patch = patch
         self.checklist = checklist
         self.refresh()
 
@@ -162,16 +162,16 @@ class ChecklistDetailPage(QWidget):
         if not self.checklist:
             return
         c = self.checklist
-        self.title_label.setText(c.name)
+        self.title_label.setText(f"{self.patch.name} · {c.name}")
 
         while self.badge_host.count():
-            item = self.badge_host.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+            entry = self.badge_host.takeAt(0)
+            if entry.widget():
+                entry.widget().deleteLater()
         self.badge_host.addWidget(country_badge(c))
 
-        dday_text, dday_color = dday_info(c.due_date)
-        self.dday_label.setText(f"기한: {c.due_date or '없음'}  {dday_text}")
+        dday_text, dday_color = dday_info(self.patch.due_date)
+        self.dday_label.setText(f"패치일 {self.patch.due_date or '없음'}  {dday_text}")
         self.dday_label.setStyleSheet(f"color: {dday_color}; font-weight: bold;")
         self._update_progress()
         self._rebuild_items()
@@ -184,9 +184,9 @@ class ChecklistDetailPage(QWidget):
 
     def _rebuild_items(self) -> None:
         while self.items_layout.count() > 1:
-            item = self.items_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+            entry = self.items_layout.takeAt(0)
+            if entry.widget():
+                entry.widget().deleteLater()
 
         items = list(self.checklist.items)
         if self.sort_toggle.isChecked():
@@ -198,18 +198,7 @@ class ChecklistDetailPage(QWidget):
 
     def _on_item_status_changed(self) -> None:
         self._update_progress()
-        done, total = self.checklist.progress
-        if total and done == total and not self.checklist.is_archived:
-            answer = QMessageBox.question(
-                self,
-                "모든 항목 완료",
-                "모든 항목이 완료되었습니다.\n완료 처리하고 보관함으로 이동할까요?",
-            )
-            if answer == QMessageBox.StandardButton.Yes:
-                self.checklist.completed_at = datetime.now().strftime("%Y-%m-%d %H:%M")
-                self.storage.save()
-                self.archivedChanged.emit()
-                self.backRequested.emit()
-                return
+        if self.checklist.is_done:
+            self.checklistCompleted.emit()
         if self.sort_toggle.isChecked():
             self._rebuild_items()

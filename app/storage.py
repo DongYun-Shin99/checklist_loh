@@ -5,7 +5,7 @@ import json
 import sys
 from pathlib import Path
 
-from .models import Checklist, Preset
+from .models import Patch, Preset
 
 
 def default_data_dir() -> Path:
@@ -22,7 +22,7 @@ class Storage:
         self.dir = Path(directory) if directory else default_data_dir()
         self.file = self.dir / "app_data.json"
         self.presets: list[Preset] = []
-        self.checklists: list[Checklist] = []
+        self.patches: list[Patch] = []
         self.load()
 
     def load(self) -> None:
@@ -33,27 +33,35 @@ class Storage:
         except (json.JSONDecodeError, OSError):
             return
         self.presets = [Preset.from_dict(d) for d in data.get("presets", [])]
-        self.checklists = [Checklist.from_dict(d) for d in data.get("checklists", [])]
+        self.patches = [Patch.from_dict(d) for d in data.get("patches", [])]
 
     def save(self) -> None:
         self.dir.mkdir(parents=True, exist_ok=True)
         data = {
             "presets": [p.to_dict() for p in self.presets],
-            "checklists": [c.to_dict() for c in self.checklists],
+            "patches": [p.to_dict() for p in self.patches],
         }
         self.file.write_text(
             json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
         )
 
     # ---- 조회 ----
-    def active_checklists(self) -> list[Checklist]:
-        return [c for c in self.checklists if not c.is_archived]
+    def active_patches(self) -> list[Patch]:
+        return [p for p in self.patches if not p.is_archived]
 
-    def archived_checklists(self) -> list[Checklist]:
-        return [c for c in self.checklists if c.is_archived]
+    def archived_patches(self) -> list[Patch]:
+        return [p for p in self.patches if p.is_archived]
 
-    def find_checklist(self, checklist_id: str) -> Checklist | None:
-        return next((c for c in self.checklists if c.id == checklist_id), None)
+    def find_patch(self, patch_id: str) -> Patch | None:
+        return next((p for p in self.patches if p.id == patch_id), None)
+
+    def find_checklist(self, checklist_id: str):
+        """체크리스트 id로 (패치, 체크리스트) 쌍을 찾는다."""
+        for patch in self.patches:
+            for checklist in patch.checklists:
+                if checklist.id == checklist_id:
+                    return patch, checklist
+        return None, None
 
     def find_preset_by_name(self, name: str) -> Preset | None:
         return next((p for p in self.presets if p.name == name), None)

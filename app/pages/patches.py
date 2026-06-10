@@ -1,4 +1,4 @@
-"""진행 중인 체크리스트 목록 화면 (메인)."""
+"""진행 중인 패치 목록 화면 (메인). 패치일 + 전체 진행률만 심플하게 보여준다."""
 from __future__ import annotations
 
 from datetime import date, datetime
@@ -18,29 +18,19 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..dialogs import NewChecklistDialog
-from ..models import COUNTRY_COLORS, Checklist, create_checklist_from_preset
+from ..dialogs import NewPatchDialog
+from ..models import Patch
 from ..storage import Storage
 from ..utils import dday_info
 
 
-def country_badge(checklist: Checklist) -> QLabel:
-    badge = QLabel(checklist.country_name)
-    color = COUNTRY_COLORS.get(checklist.country, "#6b7280")
-    badge.setStyleSheet(
-        f"background: {color}; color: white; border-radius: 9px;"
-        "padding: 2px 10px; font-size: 12px; font-weight: bold;"
-    )
-    return badge
-
-
-class ChecklistCard(QFrame):
+class PatchCard(QFrame):
     clicked = Signal(str)
     menuRequested = Signal(str, object)  # id, global pos
 
-    def __init__(self, checklist: Checklist):
+    def __init__(self, patch: Patch):
         super().__init__()
-        self.checklist_id = checklist.id
+        self.patch_id = patch.id
         self.setProperty("card", True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
@@ -49,40 +39,45 @@ class ChecklistCard(QFrame):
         layout.setSpacing(8)
 
         top = QHBoxLayout()
-        name = QLabel(checklist.name)
+        name = QLabel(patch.name)
         name.setStyleSheet("font-size: 15px; font-weight: bold; border: none;")
         top.addWidget(name)
-        top.addWidget(country_badge(checklist))
+        count = QLabel(f"체크리스트 {len(patch.checklists)}개")
+        count.setStyleSheet("color: #9ca3af; border: none; font-size: 12px;")
+        top.addWidget(count)
         top.addStretch()
-        dday_text, dday_color = dday_info(checklist.due_date)
-        dday = QLabel(dday_text)
-        dday.setStyleSheet(f"color: {dday_color}; font-weight: bold; border: none;")
-        top.addWidget(dday)
+        dday_text, dday_color = dday_info(patch.due_date)
+        due = QLabel(f"패치일 {patch.due_date}  {dday_text}")
+        due.setStyleSheet(f"color: {dday_color}; font-weight: bold; border: none;")
+        top.addWidget(due)
         layout.addLayout(top)
 
-        done, total = checklist.progress
+        done, total = patch.progress
         bottom = QHBoxLayout()
         bar = QProgressBar()
         bar.setMaximum(max(total, 1))
         bar.setValue(done)
         bar.setTextVisible(False)
         bottom.addWidget(bar, 1)
-        count = QLabel(f"{done}/{total}")
-        count.setStyleSheet("color: #6b7280; border: none;")
-        bottom.addWidget(count)
+        percent = QLabel(f"{patch.percent}%")
+        percent.setStyleSheet(
+            "color: #2563eb; border: none; font-weight: bold; min-width: 38px;"
+        )
+        percent.setAlignment(Qt.AlignmentFlag.AlignRight)
+        bottom.addWidget(percent)
         layout.addLayout(bottom)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
-            self.clicked.emit(self.checklist_id)
+            self.clicked.emit(self.patch_id)
         super().mousePressEvent(event)
 
     def contextMenuEvent(self, event):
-        self.menuRequested.emit(self.checklist_id, event.globalPos())
+        self.menuRequested.emit(self.patch_id, event.globalPos())
 
 
-class ChecklistListPage(QWidget):
-    openRequested = Signal(str)  # checklist id
+class PatchListPage(QWidget):
+    openRequested = Signal(str)  # patch id
     dataChanged = Signal()
 
     def __init__(self, storage: Storage):
@@ -94,13 +89,13 @@ class ChecklistListPage(QWidget):
         layout.setSpacing(14)
 
         header = QHBoxLayout()
-        title = QLabel("진행 중인 체크리스트")
+        title = QLabel("진행 중인 패치")
         title.setProperty("h1", True)
         header.addWidget(title)
         header.addStretch()
-        new_btn = QPushButton("＋ 새 체크리스트")
+        new_btn = QPushButton("＋ 새 패치")
         new_btn.setProperty("primary", True)
-        new_btn.clicked.connect(self._create_checklist)
+        new_btn.clicked.connect(self._create_patch)
         header.addWidget(new_btn)
         layout.addLayout(header)
 
@@ -115,7 +110,7 @@ class ChecklistListPage(QWidget):
         layout.addWidget(self.scroll, 1)
 
         self.empty_label = QLabel(
-            "진행 중인 체크리스트가 없습니다.\n[＋ 새 체크리스트]를 눌러 프리셋에서 만들어보세요."
+            "진행 중인 패치가 없습니다.\n[＋ 새 패치]로 패치일을 정해 만들어보세요."
         )
         self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.empty_label.setProperty("muted", True)
@@ -123,85 +118,78 @@ class ChecklistListPage(QWidget):
 
     def refresh(self) -> None:
         while self.cards_layout.count() > 1:
-            item = self.cards_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+            entry = self.cards_layout.takeAt(0)
+            if entry.widget():
+                entry.widget().deleteLater()
 
-        active = self.storage.active_checklists()
+        active = self.storage.active_patches()
         self.empty_label.setVisible(not active)
         self.scroll.setVisible(bool(active))
 
-        def sort_key(c: Checklist):
+        def sort_key(p: Patch):
             try:
-                return (0, date.fromisoformat(c.due_date))
+                return (0, date.fromisoformat(p.due_date))
             except ValueError:
                 return (1, date.max)
 
-        for checklist in sorted(active, key=sort_key):
-            card = ChecklistCard(checklist)
+        for patch in sorted(active, key=sort_key):
+            card = PatchCard(patch)
             card.clicked.connect(self.openRequested.emit)
             card.menuRequested.connect(self._show_card_menu)
             self.cards_layout.insertWidget(self.cards_layout.count() - 1, card)
 
     # ---- 동작 ----
-    def _create_checklist(self) -> None:
-        if not self.storage.presets:
-            QMessageBox.information(
-                self, "프리셋 없음",
-                "체크리스트를 만들려면 먼저 프리셋이 필요합니다.\n프리셋 메뉴에서 만들어주세요.",
-            )
-            return
-        dialog = NewChecklistDialog(self.storage.presets, self)
+    def _create_patch(self) -> None:
+        dialog = NewPatchDialog(self)
         if dialog.exec():
-            preset, country, name, due = dialog.result_values()
-            checklist = create_checklist_from_preset(
-                preset, country, name, due,
+            name, due = dialog.result_values()
+            patch = Patch(
+                name=name,
+                due_date=due,
                 created_at=datetime.now().strftime("%Y-%m-%d %H:%M"),
             )
-            self.storage.checklists.append(checklist)
+            self.storage.patches.append(patch)
             self.storage.save()
             self.refresh()
-            self.openRequested.emit(checklist.id)
+            self.openRequested.emit(patch.id)
 
-    def _show_card_menu(self, checklist_id: str, global_pos) -> None:
-        checklist = self.storage.find_checklist(checklist_id)
-        if not checklist:
+    def _show_card_menu(self, patch_id: str, global_pos) -> None:
+        patch = self.storage.find_patch(patch_id)
+        if not patch:
             return
         menu = QMenu(self)
         rename_action = menu.addAction("이름 변경")
-        due_action = menu.addAction("기한 변경")
-        done, total = checklist.progress
-        archive_action = None
-        if total and done == total:
-            archive_action = menu.addAction("보관함으로 이동")
+        due_action = menu.addAction("패치일 변경")
+        archive_action = menu.addAction("보관함으로 이동") if patch.is_done else None
         menu.addSeparator()
         delete_action = menu.addAction("삭제")
         chosen = menu.exec(global_pos)
         if chosen is None:
             return
         if chosen == rename_action:
-            text, ok = QInputDialog.getText(self, "이름 변경", "새 이름:", text=checklist.name)
+            text, ok = QInputDialog.getText(self, "이름 변경", "새 이름:", text=patch.name)
             if ok and text.strip():
-                checklist.name = text.strip()
+                patch.name = text.strip()
         elif chosen == due_action:
             text, ok = QInputDialog.getText(
-                self, "기한 변경", "기한 (YYYY-MM-DD):", text=checklist.due_date
+                self, "패치일 변경", "패치일 (YYYY-MM-DD):", text=patch.due_date
             )
             if ok:
                 try:
                     date.fromisoformat(text.strip())
-                    checklist.due_date = text.strip()
+                    patch.due_date = text.strip()
                 except ValueError:
                     QMessageBox.warning(self, "형식 오류", "YYYY-MM-DD 형식으로 입력해주세요.")
         elif archive_action and chosen == archive_action:
-            checklist.completed_at = datetime.now().strftime("%Y-%m-%d %H:%M")
+            patch.completed_at = datetime.now().strftime("%Y-%m-%d %H:%M")
             self.dataChanged.emit()
         elif chosen == delete_action:
             answer = QMessageBox.question(
-                self, "삭제", f'"{checklist.name}" 체크리스트를 삭제할까요?'
+                self, "삭제",
+                f'"{patch.name}" 패치를 삭제할까요?\n안의 체크리스트도 함께 삭제됩니다.',
             )
             if answer != QMessageBox.StandardButton.Yes:
                 return
-            self.storage.checklists.remove(checklist)
+            self.storage.patches.remove(patch)
         self.storage.save()
         self.refresh()

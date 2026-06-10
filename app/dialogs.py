@@ -28,7 +28,7 @@ def _ok_cancel(ok_text: str) -> QDialogButtonBox:
 
 
 class NewPatchDialog(QDialog):
-    """패치일(기한)을 정해서 새 패치를 만드는 다이얼로그."""
+    """패치일(기한)과 국가를 정해서 새 패치를 만드는 다이얼로그."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -46,10 +46,16 @@ class NewPatchDialog(QDialog):
         self.due_edit.setDate(QDate(default_due.year, default_due.month, default_due.day))
         self.due_edit.dateChanged.connect(self._update_default_name)
 
+        self.country_combo = QComboBox()
+        for code, name in COUNTRIES.items():
+            self.country_combo.addItem(name, code)
+        self.country_combo.currentIndexChanged.connect(self._update_default_name)
+
         self.name_edit = QLineEdit()
         self.name_edit.textEdited.connect(self._on_name_edited)
 
         form.addRow("패치일", self.due_edit)
+        form.addRow("국가", self.country_combo)
         form.addRow("이름", self.name_edit)
         layout.addLayout(form)
 
@@ -67,21 +73,22 @@ class NewPatchDialog(QDialog):
         if self._name_edited and self.name_edit.text().strip():
             return
         d = self.due_edit.date()
-        self.name_edit.setText(f"{d.month()}/{d.day()} 패치")
+        self.name_edit.setText(f"{d.month()}/{d.day()} {self.country_combo.currentText()} 패치")
         self._name_edited = False
 
-    def result_values(self) -> tuple[str, str]:
+    def result_values(self) -> tuple[str, str, str]:
         due = self.due_edit.date().toString("yyyy-MM-dd")
+        country = self.country_combo.currentData()
         name = self.name_edit.text().strip() or f"{due} 패치"
-        return name, due
+        return name, country, due
 
 
 class AddChecklistDialog(QDialog):
-    """패치에 체크리스트를 추가하는 다이얼로그 (프리셋 + 국가)."""
+    """패치에 작업 묶음(체크리스트)을 추가하는 다이얼로그. 국가는 패치를 따라간다."""
 
-    def __init__(self, presets: list[Preset], parent=None):
+    def __init__(self, presets: list[Preset], patch: Patch, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("체크리스트 추가")
+        self.setWindowTitle(f"체크리스트 추가 — {patch.name} ({patch.country_name})")
         self.setMinimumWidth(380)
         self._name_edited = False
 
@@ -93,15 +100,10 @@ class AddChecklistDialog(QDialog):
         for p in presets:
             self.preset_combo.addItem(f"{p.name} ({len(p.items)}개 항목)", p)
 
-        self.country_combo = QComboBox()
-        for code, name in COUNTRIES.items():
-            self.country_combo.addItem(name, code)
-
         self.name_edit = QLineEdit()
         self.name_edit.textEdited.connect(self._on_name_edited)
 
         form.addRow("프리셋", self.preset_combo)
-        form.addRow("국가", self.country_combo)
         form.addRow("이름", self.name_edit)
         layout.addLayout(form)
 
@@ -111,7 +113,6 @@ class AddChecklistDialog(QDialog):
         layout.addWidget(buttons)
 
         self.preset_combo.currentIndexChanged.connect(self._update_default_name)
-        self.country_combo.currentIndexChanged.connect(self._update_default_name)
         self._update_default_name()
 
     def _on_name_edited(self) -> None:
@@ -121,16 +122,14 @@ class AddChecklistDialog(QDialog):
         if self._name_edited and self.name_edit.text().strip():
             return
         preset = self.preset_combo.currentData()
-        country = self.country_combo.currentText()
         if preset:
-            self.name_edit.setText(f"{preset.name} - {country}")
+            self.name_edit.setText(preset.name)
             self._name_edited = False
 
-    def result_values(self) -> tuple[Preset, str, str]:
+    def result_values(self) -> tuple[Preset, str]:
         preset = self.preset_combo.currentData()
-        country_code = self.country_combo.currentData()
-        name = self.name_edit.text().strip() or f"{preset.name} - {self.country_combo.currentText()}"
-        return preset, country_code, name
+        name = self.name_edit.text().strip() or preset.name
+        return preset, name
 
 
 class ArchiveViewDialog(QDialog):
@@ -176,7 +175,7 @@ class ArchiveViewDialog(QDialog):
             )
         header = (
             f"<h3>{c.name}</h3>"
-            f'<p style="color:#6b7280;">패치: {patch.name} · 프리셋: {c.preset_name} · 국가: {c.country_name}<br>'
+            f'<p style="color:#6b7280;">패치: {patch.name} · 프리셋: {c.preset_name} · 국가: {patch.country_name}<br>'
             f"패치일: {patch.due_date or '없음'} · 완료일: {patch.completed_at or '-'}</p><hr>"
         )
         return header + "".join(rows)

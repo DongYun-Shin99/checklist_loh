@@ -168,7 +168,7 @@ class ChecklistDetailPage(QWidget):
             entry = self.badge_host.takeAt(0)
             if entry.widget():
                 entry.widget().deleteLater()
-        self.badge_host.addWidget(country_badge(c))
+        self.badge_host.addWidget(country_badge(self.patch.country))
 
         dday_text, dday_color = dday_info(self.patch.due_date)
         self.dday_label.setText(f"패치일 {self.patch.due_date or '없음'}  {dday_text}")

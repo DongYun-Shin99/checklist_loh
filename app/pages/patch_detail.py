@@ -43,7 +43,10 @@ class ChecklistCard(QFrame):
         name = QLabel(checklist.name)
         name.setStyleSheet("font-size: 15px; font-weight: bold; border: none;")
         top.addWidget(name)
-        top.addWidget(country_badge(checklist))
+        if checklist.preset_name and checklist.preset_name != checklist.name:
+            preset_label = QLabel(checklist.preset_name)
+            preset_label.setStyleSheet("color: #9ca3af; border: none; font-size: 12px;")
+            top.addWidget(preset_label)
         top.addStretch()
         if checklist.is_done:
             done_mark = QLabel("완료 ✓")
@@ -93,6 +96,8 @@ class PatchDetailPage(QWidget):
         self.title_label = QLabel()
         self.title_label.setProperty("h1", True)
         header.addWidget(self.title_label)
+        self.badge_host = QHBoxLayout()
+        header.addLayout(self.badge_host)
         header.addStretch()
         self.due_label = QLabel()
         header.addWidget(self.due_label)
@@ -137,6 +142,11 @@ class PatchDetailPage(QWidget):
             return
         patch = self.patch
         self.title_label.setText(patch.name)
+        while self.badge_host.count():
+            entry = self.badge_host.takeAt(0)
+            if entry.widget():
+                entry.widget().deleteLater()
+        self.badge_host.addWidget(country_badge(patch.country))
         dday_text, dday_color = dday_info(patch.due_date)
         self.due_label.setText(f"패치일 {patch.due_date}  {dday_text}")
         self.due_label.setStyleSheet(f"color: {dday_color}; font-weight: bold;")
@@ -167,10 +177,10 @@ class PatchDetailPage(QWidget):
                 "체크리스트를 추가하려면 먼저 프리셋이 필요합니다.\n프리셋 메뉴에서 만들어주세요.",
             )
             return
-        dialog = AddChecklistDialog(self.storage.presets, self)
+        dialog = AddChecklistDialog(self.storage.presets, self.patch, self)
         if dialog.exec():
-            preset, country, name = dialog.result_values()
-            checklist = create_checklist_from_preset(preset, country, name)
+            preset, name = dialog.result_values()
+            checklist = create_checklist_from_preset(preset, self.patch.country, name)
             self.patch.checklists.append(checklist)
             self.storage.save()
             self.refresh()

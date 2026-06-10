@@ -24,58 +24,71 @@ from app.style import STYLESHEET
 
 
 def build_sample(storage: Storage) -> None:
-    preset = Preset(
-        name="정기 빌드",
-        description="월간 빌드 배포 작업",
+    hero_preset = Preset(
+        name="영웅 추가",
+        description="신규 영웅 추가 작업",
         items=[
             PresetItem(
-                "리소스 파일 교체",
-                {"KR": "/tmp/build/kor/resources", "TW": "/tmp/build/tw/resources", "JP": "/tmp/build/jpn/resources"},
+                "영웅 데이터 수정",
+                {"KR": "/tmp/build/kor/heroes", "TW": "/tmp/build/tw/heroes", "JP": "/tmp/build/jpn/heroes"},
             ),
-            PresetItem("번역 파일 검수", {"KR": "/tmp", "TW": "/tmp", "JP": "/tmp"}),
-            PresetItem("패치노트 작성", {"KR": "/없는/경로/patchnote.md", "TW": "", "JP": ""}),
-            PresetItem("QA 전달", {"KR": "", "TW": "", "JP": ""}),
+            PresetItem("스킬 테이블 갱신", {"KR": "/tmp", "TW": "/tmp", "JP": "/tmp"}),
+            PresetItem("일러스트 리소스 반영", {"KR": "/없는/경로/illust", "TW": "", "JP": ""}),
+            PresetItem("밸런스 검수", {"KR": "", "TW": "", "JP": ""}),
         ],
     )
-    storage.presets.append(preset)
+    shop_preset = Preset(
+        name="상점 업데이트",
+        description="상점 상품 교체",
+        items=[
+            PresetItem("상품 테이블 교체", {"KR": "/tmp", "TW": "/tmp", "JP": "/tmp"}),
+            PresetItem("배너 이미지 교체", {"KR": "/tmp", "TW": "/tmp", "JP": "/tmp"}),
+        ],
+    )
+    storage.presets.extend([hero_preset, shop_preset])
 
     today = date.today()
 
-    # 진행 중인 패치: 한국/일본 체크리스트 포함
-    patch = Patch(
-        name="6/15 패치",
+    # 진행 중인 패치 (한국)
+    kr_patch = Patch(
+        name="6/15 한국 패치",
+        country="KR",
         due_date=(today + timedelta(days=2)).isoformat(),
         created_at="2026-06-01 10:00",
     )
-    kr = create_checklist_from_preset(preset, "KR", "정기 빌드 - 한국")
-    kr.items[0].status = STATUS_DONE
-    kr.items[1].status = STATUS_DONE
-    kr.items[1].memo = "폰트 파일은 별도 확인 필요"
-    jp = create_checklist_from_preset(preset, "JP", "정기 빌드 - 일본")
-    jp.items[0].status = STATUS_DONE
-    patch.checklists.extend([kr, jp])
+    hero = create_checklist_from_preset(hero_preset, "KR", "영웅 추가")
+    hero.items[0].status = STATUS_DONE
+    hero.items[1].status = STATUS_DONE
+    hero.items[1].memo = "신규 스킬 이펙트는 별도 확인 필요"
+    shop = create_checklist_from_preset(shop_preset, "KR", "상점 업데이트")
+    kr_patch.checklists.extend([hero, shop])
 
-    patch2 = Patch(
-        name="7/1 패치",
-        due_date=(today + timedelta(days=18)).isoformat(),
+    # 진행 중인 패치 (일본)
+    jp_patch = Patch(
+        name="6/22 일본 패치",
+        country="JP",
+        due_date=(today + timedelta(days=9)).isoformat(),
         created_at="2026-06-05 10:00",
     )
-    patch2.checklists.append(create_checklist_from_preset(preset, "TW", "정기 빌드 - 대만"))
+    jp_patch.checklists.append(create_checklist_from_preset(hero_preset, "JP", "영웅 추가"))
 
-    # 완료된 패치 (보관함)
-    done_patch = Patch(
-        name="5/20 패치",
-        due_date=(today - timedelta(days=21)).isoformat(),
-        created_at="2026-05-01 10:00",
-        completed_at=(today - timedelta(days=22)).isoformat() + " 18:00",
-    )
-    for code, name in [("KR", "정기 빌드 - 한국"), ("JP", "정기 빌드 - 일본")]:
-        c = create_checklist_from_preset(preset, code, name)
+    # 완료된 패치 (보관함, 한국/대만)
+    done_patches = []
+    for code, name, days in [("KR", "5/20 한국 패치", 21), ("TW", "5/20 대만 패치", 21)]:
+        p = Patch(
+            name=name,
+            country=code,
+            due_date=(today - timedelta(days=days)).isoformat(),
+            created_at="2026-05-01 10:00",
+            completed_at=(today - timedelta(days=days + 1)).isoformat() + " 18:00",
+        )
+        c = create_checklist_from_preset(hero_preset, code, "영웅 추가")
         for item in c.items:
             item.status = STATUS_DONE
-        done_patch.checklists.append(c)
+        p.checklists.append(c)
+        done_patches.append(p)
 
-    storage.patches.extend([patch, patch2, done_patch])
+    storage.patches.extend([kr_patch, jp_patch, *done_patches])
     storage.save()
 
 
@@ -101,19 +114,19 @@ def main() -> int:
         # 1) 패치 목록
         shot("1_patch_list")
 
-        # 2) 패치 상세 (체크리스트 목록)
+        # 2) 패치 상세 (작업 묶음 목록)
         active = storage.active_patches()
         window._open_patch(active[0].id)
         shot("2_patch_detail")
 
-        # 3) 체크리스트 상세 (항목)
-        kr = active[0].checklists[0]
-        window._open_checklist(kr.id)
+        # 3) 체크리스트 상세 (세세한 항목)
+        hero = active[0].checklists[0]
+        window._open_checklist(hero.id)
         shot("3_checklist_detail")
 
         # 항목 토글/진행률 집계 확인
         before_patch = active[0].progress
-        kr.items[2].status = STATUS_DONE
+        hero.items[2].status = STATUS_DONE
         storage.save()
         assert active[0].progress[0] == before_patch[0] + 1
         assert 0 < active[0].percent < 100
@@ -122,21 +135,22 @@ def main() -> int:
         window._on_nav(1)
         shot("4_preset_editor")
 
-        # 5) 보관함
+        # 5) 보관함 (국가 그룹핑)
         window._on_nav(2)
         shot("5_archive")
 
         # 저장/재로드 라운드트립 확인
         reloaded = Storage(Path(tmp))
-        assert len(reloaded.presets) == 1
+        assert len(reloaded.presets) == 2
         assert len(reloaded.active_patches()) == 2
-        assert len(reloaded.archived_patches()) == 1
+        assert len(reloaded.archived_patches()) == 2
+        assert reloaded.active_patches()[0].country == "KR"
         assert len(reloaded.active_patches()[0].checklists) == 2
-        assert reloaded.active_patches()[0].checklists[0].items[1].memo == "폰트 파일은 별도 확인 필요"
+        assert reloaded.active_patches()[0].checklists[0].items[1].memo == "신규 스킬 이펙트는 별도 확인 필요"
         found_patch, found_checklist = reloaded.find_checklist(
-            reloaded.active_patches()[0].checklists[1].id
+            reloaded.active_patches()[1].checklists[0].id
         )
-        assert found_patch is not None and found_checklist.country == "JP"
+        assert found_patch is not None and found_patch.country == "JP"
 
     print("스모크 테스트 통과")
     return 0

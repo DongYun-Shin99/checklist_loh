@@ -1,9 +1,10 @@
-"""보관함 화면: 완료된 패치를 보관. 패치를 펼치면 안의 체크리스트(국가별)가 보인다."""
+"""보관함 화면: 완료된 패치를 국가 단위로 그룹핑해서 보관."""
 from __future__ import annotations
 
 from datetime import date
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QLabel,
     QMenu,
@@ -15,7 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..dialogs import ArchiveViewDialog
-from ..models import COUNTRY_COLORS, Patch
+from ..models import COUNTRIES, COUNTRY_COLORS, Patch
 from ..storage import Storage
 
 PATCH_ROLE = Qt.ItemDataRole.UserRole
@@ -51,7 +52,7 @@ class ArchivePage(QWidget):
 
         self.tree = QTreeWidget()
         self.tree.setColumnCount(4)
-        self.tree.setHeaderLabels(["이름", "국가/프리셋", "완료일", "패치일"])
+        self.tree.setHeaderLabels(["이름", "정보", "완료일", "패치일"])
         self.tree.setColumnWidth(0, 300)
         self.tree.setColumnWidth(1, 160)
         self.tree.setColumnWidth(2, 140)
@@ -71,43 +72,49 @@ class ArchivePage(QWidget):
         self.empty_label.setVisible(not archived)
         self.tree.setVisible(bool(archived))
 
-        from PySide6.QtGui import QBrush, QColor
-
-        for patch in sorted(archived, key=lambda p: p.completed_at or "", reverse=True):
-            on_time = _on_time(patch)
-            if on_time is None:
-                due_text = patch.due_date or "기한 없음"
-            elif on_time:
-                due_text = f"{patch.due_date} · 기한 내 ✓"
-            else:
-                due_text = f"{patch.due_date} · 기한 초과 ⚠"
-            top = QTreeWidgetItem([
-                patch.name,
-                f"체크리스트 {len(patch.checklists)}개",
-                patch.completed_at or "-",
-                due_text,
-            ])
-            top.setData(0, PATCH_ROLE, patch.id)
-            font = top.font(0)
+        for code, country_name in COUNTRIES.items():
+            group = [p for p in archived if p.country == code]
+            if not group:
+                continue
+            country_node = QTreeWidgetItem([f"{country_name} ({len(group)})"])
+            font = country_node.font(0)
             font.setBold(True)
-            top.setFont(0, font)
-            if on_time is False:
-                top.setForeground(3, Qt.GlobalColor.red)
-            self.tree.addTopLevelItem(top)
+            country_node.setFont(0, font)
+            country_node.setForeground(
+                0, QBrush(QColor(COUNTRY_COLORS.get(code, "#374151")))
+            )
+            self.tree.addTopLevelItem(country_node)
 
-            for checklist in patch.checklists:
-                child = QTreeWidgetItem([
-                    checklist.name,
-                    f"{checklist.country_name} · {checklist.preset_name}",
-                    "", "",
+            for patch in sorted(group, key=lambda p: p.completed_at or "", reverse=True):
+                on_time = _on_time(patch)
+                if on_time is None:
+                    due_text = patch.due_date or "기한 없음"
+                elif on_time:
+                    due_text = f"{patch.due_date} · 기한 내 ✓"
+                else:
+                    due_text = f"{patch.due_date} · 기한 초과 ⚠"
+                patch_node = QTreeWidgetItem([
+                    patch.name,
+                    f"체크리스트 {len(patch.checklists)}개",
+                    patch.completed_at or "-",
+                    due_text,
                 ])
-                child.setData(0, PATCH_ROLE, patch.id)
-                child.setData(0, CHECKLIST_ROLE, checklist.id)
-                child.setForeground(
-                    1, QBrush(QColor(COUNTRY_COLORS.get(checklist.country, "#374151")))
-                )
-                top.addChild(child)
-            top.setExpanded(False)
+                patch_node.setData(0, PATCH_ROLE, patch.id)
+                if on_time is False:
+                    patch_node.setForeground(3, Qt.GlobalColor.red)
+                country_node.addChild(patch_node)
+
+                for checklist in patch.checklists:
+                    done, total = checklist.progress
+                    child = QTreeWidgetItem([
+                        checklist.name,
+                        f"{checklist.preset_name} · {done}/{total}",
+                        "", "",
+                    ])
+                    child.setData(0, PATCH_ROLE, patch.id)
+                    child.setData(0, CHECKLIST_ROLE, checklist.id)
+                    patch_node.addChild(child)
+            country_node.setExpanded(True)
 
     def _resolve(self, item: QTreeWidgetItem):
         patch = self.storage.find_patch(item.data(0, PATCH_ROLE))

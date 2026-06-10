@@ -93,12 +93,11 @@ class ChecklistItem:
 
 @dataclass
 class Checklist:
-    """패치 안에 들어가는 체크리스트. 기한은 패치를 따라간다."""
+    """패치 안에 들어가는 작업 묶음(예: 영웅 추가). 기한과 국가는 패치를 따라간다."""
 
     id: str = field(default_factory=new_id)
     name: str = ""
     preset_name: str = ""
-    country: str = "KR"
     items: list = field(default_factory=list)
 
     @property
@@ -111,16 +110,11 @@ class Checklist:
         done, total = self.progress
         return total > 0 and done == total
 
-    @property
-    def country_name(self) -> str:
-        return COUNTRIES.get(self.country, self.country)
-
     def to_dict(self) -> dict:
         return {
             "id": self.id,
             "name": self.name,
             "preset_name": self.preset_name,
-            "country": self.country,
             "items": [i.to_dict() for i in self.items],
         }
 
@@ -130,21 +124,25 @@ class Checklist:
             id=d.get("id") or new_id(),
             name=d.get("name", ""),
             preset_name=d.get("preset_name", ""),
-            country=d.get("country", "KR"),
             items=[ChecklistItem.from_dict(i) for i in d.get("items", [])],
         )
 
 
 @dataclass
 class Patch:
-    """최상위 단위. 패치일(기한)과 전체 진행률만 노출된다."""
+    """최상위 단위: 패치일 + 국가. 안의 체크리스트는 이 국가의 경로로 생성된다."""
 
     id: str = field(default_factory=new_id)
     name: str = ""
+    country: str = "KR"
     due_date: str = ""  # YYYY-MM-DD (패치일)
     created_at: str = ""
     completed_at: str | None = None
     checklists: list = field(default_factory=list)
+
+    @property
+    def country_name(self) -> str:
+        return COUNTRIES.get(self.country, self.country)
 
     @property
     def progress(self) -> tuple[int, int]:
@@ -170,6 +168,7 @@ class Patch:
         return {
             "id": self.id,
             "name": self.name,
+            "country": self.country,
             "due_date": self.due_date,
             "created_at": self.created_at,
             "completed_at": self.completed_at,
@@ -181,6 +180,7 @@ class Patch:
         return cls(
             id=d.get("id") or new_id(),
             name=d.get("name", ""),
+            country=d.get("country", "KR"),
             due_date=d.get("due_date", ""),
             created_at=d.get("created_at", ""),
             completed_at=d.get("completed_at"),
@@ -189,9 +189,9 @@ class Patch:
 
 
 def create_checklist_from_preset(preset: Preset, country: str, name: str) -> Checklist:
-    """프리셋에서 체크리스트 생성. 경로는 선택한 국가의 것으로 확정된다."""
+    """프리셋에서 체크리스트 생성. 경로는 패치의 국가 것으로 확정된다."""
     items = [
         ChecklistItem(description=pi.description, path=pi.paths.get(country, ""))
         for pi in preset.items
     ]
-    return Checklist(name=name, preset_name=preset.name, country=country, items=items)
+    return Checklist(name=name, preset_name=preset.name, items=items)

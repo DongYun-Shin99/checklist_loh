@@ -22,6 +22,7 @@ from ..dialogs import NewPatchDialog
 from ..models import Patch
 from ..storage import Storage
 from ..utils import dday_info
+from ..widgets import country_badge
 
 
 class PatchCard(QFrame):
@@ -42,6 +43,7 @@ class PatchCard(QFrame):
         name = QLabel(patch.name)
         name.setStyleSheet("font-size: 15px; font-weight: bold; border: none;")
         top.addWidget(name)
+        top.addWidget(country_badge(patch.country))
         count = QLabel(f"체크리스트 {len(patch.checklists)}개")
         count.setStyleSheet("color: #9ca3af; border: none; font-size: 12px;")
         top.addWidget(count)
@@ -142,9 +144,10 @@ class PatchListPage(QWidget):
     def _create_patch(self) -> None:
         dialog = NewPatchDialog(self)
         if dialog.exec():
-            name, due = dialog.result_values()
+            name, country, due = dialog.result_values()
             patch = Patch(
                 name=name,
+                country=country,
                 due_date=due,
                 created_at=datetime.now().strftime("%Y-%m-%d %H:%M"),
             )

@@ -188,6 +188,26 @@ class Patch:
         )
 
 
+@dataclass
+class ResourceEntry:
+    """리소스 경로 항목: 자주 쓰는 폴더/파일 바로가기 (아이콘, 일러스트 등)."""
+
+    id: str = field(default_factory=new_id)
+    name: str = ""
+    path: str = ""
+
+    def to_dict(self) -> dict:
+        return {"id": self.id, "name": self.name, "path": self.path}
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "ResourceEntry":
+        return cls(
+            id=d.get("id") or new_id(),
+            name=d.get("name", ""),
+            path=d.get("path", ""),
+        )
+
+
 def create_checklist_from_preset(preset: Preset, country: str, name: str) -> Checklist:
     """프리셋에서 체크리스트 생성. 경로는 패치의 국가 것으로 확정된다."""
     items = [

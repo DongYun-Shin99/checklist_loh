@@ -118,6 +118,8 @@ QListWidget, QTreeWidget {
 QListWidget::item, QTreeWidget::item {
     padding: 7px 8px;
     border-radius: 6px;
+}
+QListWidget::item {
     color: #111827;
 }
 QListWidget::item:selected, QTreeWidget::item:selected {

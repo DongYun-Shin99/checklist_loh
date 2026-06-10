@@ -16,6 +16,7 @@ from app.models import (
     Patch,
     Preset,
     PresetItem,
+    ResourceEntry,
     STATUS_DONE,
     create_checklist_from_preset,
 )
@@ -89,6 +90,12 @@ def build_sample(storage: Storage) -> None:
         done_patches.append(p)
 
     storage.patches.extend([kr_patch, jp_patch, *done_patches])
+
+    storage.resources.extend([
+        ResourceEntry(name="영웅 아이콘", path="/tmp"),
+        ResourceEntry(name="배너 일러스트", path="/tmp/build/kor/banners"),
+        ResourceEntry(name="사운드 리소스", path="/없는/경로/sounds"),
+    ])
     storage.save()
 
 
@@ -135,9 +142,13 @@ def main() -> int:
         window._on_nav(1)
         shot("4_preset_editor")
 
-        # 5) 보관함 (국가 그룹핑)
+        # 5) 리소스 경로
         window._on_nav(2)
-        shot("5_archive")
+        shot("5_resources")
+
+        # 6) 보관함 (국가 그룹핑)
+        window._on_nav(3)
+        shot("6_archive")
 
         # 저장/재로드 라운드트립 확인
         reloaded = Storage(Path(tmp))
@@ -151,6 +162,8 @@ def main() -> int:
             reloaded.active_patches()[1].checklists[0].id
         )
         assert found_patch is not None and found_patch.country == "JP"
+        assert len(reloaded.resources) == 3
+        assert reloaded.resources[0].name == "영웅 아이콘"
 
     print("스모크 테스트 통과")
     return 0

@@ -5,7 +5,7 @@ import json
 import sys
 from pathlib import Path
 
-from .models import Patch, Preset
+from .models import Patch, Preset, ResourceEntry
 
 
 def default_data_dir() -> Path:
@@ -23,6 +23,7 @@ class Storage:
         self.file = self.dir / "app_data.json"
         self.presets: list[Preset] = []
         self.patches: list[Patch] = []
+        self.resources: list[ResourceEntry] = []
         self.load()
 
     def load(self) -> None:
@@ -34,12 +35,14 @@ class Storage:
             return
         self.presets = [Preset.from_dict(d) for d in data.get("presets", [])]
         self.patches = [Patch.from_dict(d) for d in data.get("patches", [])]
+        self.resources = [ResourceEntry.from_dict(d) for d in data.get("resources", [])]
 
     def save(self) -> None:
         self.dir.mkdir(parents=True, exist_ok=True)
         data = {
             "presets": [p.to_dict() for p in self.presets],
             "patches": [p.to_dict() for p in self.patches],
+            "resources": [r.to_dict() for r in self.resources],
         }
         self.file.write_text(
             json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"

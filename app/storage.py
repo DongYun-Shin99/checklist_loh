@@ -5,7 +5,7 @@ import json
 import sys
 from pathlib import Path
 
-from .models import Patch, Preset, ResourceEntry
+from .models import COUNTRIES, Patch, Preset, ResourceEntry
 
 
 def default_data_dir() -> Path:
@@ -24,6 +24,7 @@ class Storage:
         self.presets: list[Preset] = []
         self.patches: list[Patch] = []
         self.resources: list[ResourceEntry] = []
+        self.settings: dict = {"base_paths": {code: "" for code in COUNTRIES}}
         self.load()
 
     def load(self) -> None:
@@ -36,6 +37,10 @@ class Storage:
         self.presets = [Preset.from_dict(d) for d in data.get("presets", [])]
         self.patches = [Patch.from_dict(d) for d in data.get("patches", [])]
         self.resources = [ResourceEntry.from_dict(d) for d in data.get("resources", [])]
+        saved_bases = data.get("settings", {}).get("base_paths", {})
+        for code in COUNTRIES:
+            if code in saved_bases:
+                self.settings["base_paths"][code] = saved_bases[code]
 
     def save(self) -> None:
         self.dir.mkdir(parents=True, exist_ok=True)
@@ -43,12 +48,16 @@ class Storage:
             "presets": [p.to_dict() for p in self.presets],
             "patches": [p.to_dict() for p in self.patches],
             "resources": [r.to_dict() for r in self.resources],
+            "settings": self.settings,
         }
         self.file.write_text(
             json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
         )
 
     # ---- 조회 ----
+    def base_paths(self) -> dict:
+        return self.settings["base_paths"]
+
     def active_patches(self) -> list[Patch]:
         return [p for p in self.patches if not p.is_archived]
 

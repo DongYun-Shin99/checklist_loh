@@ -17,6 +17,7 @@ from .pages.patch_detail import PatchDetailPage
 from .pages.patches import PatchListPage
 from .pages.presets import PresetPage
 from .pages.resources import ResourcePage
+from .pages.settings import SettingsPage
 from .storage import Storage
 
 
@@ -42,7 +43,7 @@ class MainWindow(QMainWindow):
 
         self.nav_group = QButtonGroup(self)
         self.nav_buttons: list[QPushButton] = []
-        for index, label in enumerate(["패치", "프리셋", "리소스 경로", "보관함"]):
+        for index, label in enumerate(["패치", "프리셋", "리소스 경로", "보관함", "설정"]):
             btn = QPushButton(label)
             btn.setProperty("sidebar", True)
             btn.setCheckable(True)
@@ -60,6 +61,7 @@ class MainWindow(QMainWindow):
         self.preset_page = PresetPage(storage)
         self.resource_page = ResourcePage(storage)
         self.archive_page = ArchivePage(storage)
+        self.settings_page = SettingsPage(storage)
         for page in (
             self.patch_list_page,
             self.patch_detail_page,
@@ -67,6 +69,7 @@ class MainWindow(QMainWindow):
             self.preset_page,
             self.resource_page,
             self.archive_page,
+            self.settings_page,
         ):
             self.stack.addWidget(page)
         root.addWidget(self.stack, 1)
@@ -86,7 +89,13 @@ class MainWindow(QMainWindow):
         self._on_nav(0)
 
     def _on_nav(self, index: int) -> None:
-        pages = [self.patch_list_page, self.preset_page, self.resource_page, self.archive_page]
+        pages = [
+            self.patch_list_page,
+            self.preset_page,
+            self.resource_page,
+            self.archive_page,
+            self.settings_page,
+        ]
         page = pages[index]
         page.refresh()
         self.stack.setCurrentWidget(page)

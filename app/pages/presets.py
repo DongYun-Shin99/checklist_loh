@@ -5,6 +5,7 @@ import json
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QFileDialog,
     QFormLayout,
     QFrame,
@@ -137,7 +138,49 @@ class PresetPage(QWidget):
         desc_row.addWidget(self.item_desc_edit, 1)
         form_layout.addLayout(desc_row)
 
-        grid = QGridLayout()
+        # 공통 모드: 기본 폴더(설정) 기준 상대 경로 한 벌만 입력
+        self.common_host = QWidget()
+        common_grid = QGridLayout(self.common_host)
+        common_grid.setContentsMargins(0, 0, 0, 0)
+        common_grid.setHorizontalSpacing(6)
+        common_grid.setVerticalSpacing(6)
+        rel_header = QLabel("상대 경로 (설정의 기본 폴더 아래)")
+        rel_header.setProperty("muted", True)
+        common_grid.addWidget(rel_header, 0, 0)
+        file_header = QLabel("파일 명")
+        file_header.setProperty("muted", True)
+        common_grid.addWidget(file_header, 0, 2)
+        self.common_folder_edit = QLineEdit()
+        self.common_folder_edit.setPlaceholderText("예: Assets\\DB  (절대 경로 입력 시 그대로 사용)")
+        self.common_folder_edit.textEdited.connect(
+            lambda text: self._on_common_edited("folder", text)
+        )
+        common_grid.addWidget(self.common_folder_edit, 1, 0)
+        common_folder_btn = QPushButton("폴더")
+        common_folder_btn.setProperty("small", True)
+        common_folder_btn.clicked.connect(self._browse_common_folder)
+        common_grid.addWidget(common_folder_btn, 1, 1)
+        self.common_file_edit = QLineEdit()
+        self.common_file_edit.setPlaceholderText("파일 명 (선택)")
+        self.common_file_edit.textEdited.connect(
+            lambda text: self._on_common_edited("file", text)
+        )
+        common_grid.addWidget(self.common_file_edit, 1, 2)
+        common_file_btn = QPushButton("파일")
+        common_file_btn.setProperty("small", True)
+        common_file_btn.clicked.connect(self._browse_common_file)
+        common_grid.addWidget(common_file_btn, 1, 3)
+        common_grid.setColumnStretch(0, 3)
+        common_grid.setColumnStretch(2, 2)
+        form_layout.addWidget(self.common_host)
+
+        self.per_country_check = QCheckBox("국가별 따로 입력 (경로 구조가 다른 예외 항목)")
+        self.per_country_check.toggled.connect(self._on_per_country_toggled)
+        form_layout.addWidget(self.per_country_check)
+
+        self.percountry_host = QWidget()
+        grid = QGridLayout(self.percountry_host)
+        grid.setContentsMargins(0, 0, 0, 0)
         grid.setHorizontalSpacing(6)
         grid.setVerticalSpacing(6)
         grid.addWidget(QLabel(""), 0, 0)
@@ -181,7 +224,7 @@ class PresetPage(QWidget):
             self.file_edits[code] = file_edit
         grid.setColumnStretch(1, 3)
         grid.setColumnStretch(3, 2)
-        form_layout.addLayout(grid)
+        form_layout.addWidget(self.percountry_host)
 
         right.addWidget(self.item_form_frame)
 
@@ -271,11 +314,16 @@ class PresetPage(QWidget):
         if not has_item:
             return
         self._loading = True
-        self.item_desc_edit.setText(self.current_item.description)
+        item = self.current_item
+        self.item_desc_edit.setText(item.description)
+        self.common_folder_edit.setText(item.folder)
+        self.common_file_edit.setText(item.file)
+        self.per_country_check.setChecked(item.per_country)
         for code in COUNTRIES:
-            path = self.current_item.paths.get(code, {})
+            path = item.paths.get(code, {})
             self.folder_edits[code].setText(path.get("folder", ""))
             self.file_edits[code].setText(path.get("file", ""))
+        self._update_mode_visibility()
         self._loading = False
 
     # ---- 항목 트리 헬퍼 ----
@@ -312,6 +360,58 @@ class PresetPage(QWidget):
             return
         self.current_item.paths.setdefault(code, {"folder": "", "file": ""})[key] = text
         self.storage.save()
+
+    def _update_mode_visibility(self) -> None:
+        per_country = self.per_country_check.isChecked()
+        self.common_host.setVisible(not per_country)
+        self.percountry_host.setVisible(per_country)
+
+    def _on_per_country_toggled(self, checked: bool) -> None:
+        if not self._loading and self.current_item:
+            self.current_item.per_country = checked
+            self.storage.save()
+        self._update_mode_visibility()
+
+    def _on_common_edited(self, key: str, text: str) -> None:
+        if self._loading or not self.current_item:
+            return
+        setattr(self.current_item, key, text)
+        self.storage.save()
+
+    def _strip_base(self, path: str) -> str:
+        """선택한 절대 경로가 설정의 기본 폴더 아래면 상대 경로로 줄여준다."""
+        normalized = path.replace("\\", "/").lower().rstrip("/")
+        for base in self.storage.base_paths().values():
+            if not base:
+                continue
+            base_norm = base.replace("\\", "/").lower().rstrip("/")
+            if normalized == base_norm:
+                return ""
+            if normalized.startswith(base_norm + "/"):
+                return path[len(base):].strip("/\\")
+        return path
+
+    def _browse_common_folder(self) -> None:
+        path = QFileDialog.getExistingDirectory(self, "폴더 선택")
+        if path and self.current_item:
+            rel = self._strip_base(path)
+            self.common_folder_edit.setText(rel)
+            self.current_item.folder = rel
+            self.storage.save()
+
+    def _browse_common_file(self) -> None:
+        """파일을 고르면 폴더(기본 폴더 아래면 상대 경로로)/파일 칸이 자동으로 나뉜다."""
+        path, _ = QFileDialog.getOpenFileName(self, "파일 선택")
+        if path and self.current_item:
+            from pathlib import Path
+
+            p = Path(path)
+            rel = self._strip_base(str(p.parent))
+            self.common_folder_edit.setText(rel)
+            self.common_file_edit.setText(p.name)
+            self.current_item.folder = rel
+            self.current_item.file = p.name
+            self.storage.save()
 
     def _browse_folder(self, code: str) -> None:
         path = QFileDialog.getExistingDirectory(self, "폴더 선택")

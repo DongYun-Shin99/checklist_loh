@@ -34,13 +34,25 @@ def _empty_paths() -> dict:
 
 @dataclass
 class PresetItem:
+    """프리셋 항목.
+
+    기본(공통) 모드: folder(설정의 국가별 기본 폴더 아래 상대 경로) + file 한 벌만 입력.
+    예외 모드(per_country=True): 국가별 폴더/파일을 따로 입력.
+    """
+
     description: str = ""
-    paths: dict = field(default_factory=_empty_paths)  # {국가: {folder, file}}
+    per_country: bool = False
+    folder: str = ""  # 공통 모드: 기본 폴더 기준 상대 경로 (절대 경로면 그대로 사용)
+    file: str = ""
+    paths: dict = field(default_factory=_empty_paths)  # 예외 모드: {국가: {folder, file}}
     children: list = field(default_factory=list)  # list[PresetItem], 1단계만 사용
 
     def to_dict(self) -> dict:
         return {
             "description": self.description,
+            "per_country": self.per_country,
+            "folder": self.folder,
+            "file": self.file,
             "paths": {code: dict(p) for code, p in self.paths.items()},
             "children": [c.to_dict() for c in self.children],
         }
@@ -51,8 +63,16 @@ class PresetItem:
         for code, value in d.get("paths", {}).items():
             if code in paths:
                 paths[code] = _normalize_path_entry(value)
+        if "per_country" in d:
+            per_country = bool(d["per_country"])
+        else:
+            # 구버전(국가별 입력만 있던 데이터) 호환: 경로가 입력돼 있으면 예외 모드 유지
+            per_country = any(p["folder"] or p["file"] for p in paths.values())
         return cls(
             description=d.get("description", ""),
+            per_country=per_country,
+            folder=d.get("folder", ""),
+            file=d.get("file", ""),
             paths=paths,
             children=[PresetItem.from_dict(c) for c in d.get("children", [])],
         )
@@ -270,15 +290,42 @@ class ResourceEntry:
         )
 
 
-def create_checklist_from_preset(preset: Preset, country: str, name: str) -> Checklist:
-    """프리셋에서 체크리스트 생성. 경로는 패치의 국가 것으로 확정된다."""
+def is_absolute_path(path: str) -> bool:
+    return bool(path) and (
+        path.startswith(("/", "\\")) or (len(path) > 1 and path[1] == ":")
+    )
+
+
+def join_base(base: str, rel: str) -> str:
+    """기본 폴더 + 상대 경로 조합. 상대 경로가 절대 경로면 그대로 쓴다."""
+    if not rel:
+        return base
+    if is_absolute_path(rel) or not base:
+        return rel
+    sep = "\\" if ("\\" in base or (len(base) > 1 and base[1] == ":")) else "/"
+    return base.rstrip("/\\") + sep + rel.strip("/\\")
+
+
+def create_checklist_from_preset(
+    preset: Preset, country: str, name: str, base_paths: dict | None = None
+) -> Checklist:
+    """프리셋에서 체크리스트 생성. 경로는 패치의 국가 것으로 확정된다.
+
+    공통 모드 항목은 설정의 국가별 기본 폴더(base_paths)와 상대 경로를 조합한다.
+    """
+    bases = base_paths or {}
 
     def convert(pi: PresetItem) -> ChecklistItem:
-        path = pi.paths.get(country, {})
+        if pi.per_country:
+            path = pi.paths.get(country, {})
+            folder, file = path.get("folder", ""), path.get("file", "")
+        else:
+            folder = join_base(bases.get(country, ""), pi.folder) if (pi.folder or pi.file) else ""
+            file = pi.file
         return ChecklistItem(
             description=pi.description,
-            folder=path.get("folder", ""),
-            file=path.get("file", ""),
+            folder=folder,
+            file=file,
             children=[convert(c) for c in pi.children],
         )
 

@@ -175,7 +175,9 @@ class PatchDetailPage(QWidget):
         if dialog.exec():
             preset, name = dialog.result_values()
             if preset:
-                checklist = create_checklist_from_preset(preset, self.patch.country, name)
+                checklist = create_checklist_from_preset(
+                    preset, self.patch.country, name, self.storage.base_paths()
+                )
             else:
                 checklist = Checklist(name=name)  # 빈 체크리스트: 상세 화면에서 항목 직접 추가
             self.patch.checklists.append(checklist)

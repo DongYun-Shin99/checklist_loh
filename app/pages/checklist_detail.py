@@ -33,7 +33,13 @@ from ..widgets import country_badge
 class ChecklistItemDialog(QDialog):
     """체크리스트 항목 추가/수정 다이얼로그 (이미 국가가 정해진 인스턴스용)."""
 
-    def __init__(self, parent=None, item: ChecklistItem | None = None, title: str = ""):
+    def __init__(
+        self,
+        parent=None,
+        item: ChecklistItem | None = None,
+        title: str = "",
+        base_folder: str = "",
+    ):
         super().__init__(parent)
         self.setWindowTitle(title or ("항목 수정" if item else "항목 추가"))
         self.setMinimumWidth(480)
@@ -50,6 +56,12 @@ class ChecklistItemDialog(QDialog):
         self.folder_edit = QLineEdit(item.folder if item else "")
         self.folder_edit.setPlaceholderText("폴더 경로 (선택)")
         folder_row.addWidget(self.folder_edit, 1)
+        if base_folder:
+            base_btn = QPushButton("기본 폴더")
+            base_btn.setProperty("small", True)
+            base_btn.setToolTip(f"설정의 기본 폴더 삽입: {base_folder}")
+            base_btn.clicked.connect(lambda: self.folder_edit.setText(base_folder))
+            folder_row.addWidget(base_btn)
         folder_btn = QPushButton("폴더")
         folder_btn.setProperty("small", True)
         folder_btn.clicked.connect(self._browse_folder)
@@ -333,8 +345,11 @@ class ChecklistDetailPage(QWidget):
                 return top.children
         return None
 
+    def _base_folder(self) -> str:
+        return self.storage.base_paths().get(self.patch.country, "") if self.patch else ""
+
     def _add_item(self) -> None:
-        dialog = ChecklistItemDialog(self, title="항목 추가")
+        dialog = ChecklistItemDialog(self, title="항목 추가", base_folder=self._base_folder())
         if dialog.exec():
             desc, folder, file = dialog.result_values()
             self.checklist.items.append(
@@ -356,11 +371,13 @@ class ChecklistDetailPage(QWidget):
         if chosen is None:
             return
         if chosen == edit_action:
-            dialog = ChecklistItemDialog(self, item=item)
+            dialog = ChecklistItemDialog(self, item=item, base_folder=self._base_folder())
             if dialog.exec():
                 item.description, item.folder, item.file = dialog.result_values()
         elif child_action and chosen == child_action:
-            dialog = ChecklistItemDialog(self, title="하위 항목 추가")
+            dialog = ChecklistItemDialog(
+                self, title="하위 항목 추가", base_folder=self._base_folder()
+            )
             if dialog.exec():
                 desc, folder, file = dialog.result_values()
                 item.children.append(

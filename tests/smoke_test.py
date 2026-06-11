@@ -219,6 +219,17 @@ def main() -> int:
         # 리소스 상대 경로 → 빌드별 기본 폴더로 해석
         assert join_base(reloaded.base_paths()["KR"], reloaded.resources[0].folder) == "/tmp/Assets/Textures"
 
+        # 프리셋 자동 내보내기 확인
+        export_dir = Path(tmp) / "export"
+        reloaded.settings["auto_export"] = True
+        reloaded.settings["export_folder"] = str(export_dir)
+        reloaded.save()
+        assert (export_dir / "영웅 추가.json").exists()
+        assert (export_dir / "상점 업데이트.json").exists()
+        again = Storage(Path(tmp))
+        assert again.settings["auto_export"] is True
+        assert again.settings["export_folder"] == str(export_dir)
+
         # 구버전 데이터 호환 확인
         old_item = ChecklistItem.from_dict({"description": "옛 항목", "path": "/old/path"})
         assert old_item.folder == "/old/path" and old_item.file == ""

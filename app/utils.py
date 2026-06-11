@@ -43,6 +43,53 @@ def open_in_explorer(path: str) -> None:
         subprocess.Popen(["xdg-open", str(target)])
 
 
+# ---- 윈도우 시작 시 자동 실행 (레지스트리 Run 키) ----
+AUTOSTART_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+AUTOSTART_NAME = "ChecklistLOH"
+
+
+def autostart_available() -> bool:
+    """exe로 패키징된 윈도우 빌드에서만 자동 실행 등록 가능."""
+    return sys.platform == "win32" and bool(getattr(sys, "frozen", False))
+
+
+def get_autostart() -> bool:
+    if sys.platform != "win32":
+        return False
+    import winreg
+
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, AUTOSTART_KEY) as key:
+            winreg.QueryValueEx(key, AUTOSTART_NAME)
+            return True
+    except OSError:
+        return False
+
+
+def set_autostart(enabled: bool) -> bool:
+    """현재 실행 중인 exe를 윈도우 시작 프로그램에 등록/해제."""
+    if sys.platform != "win32":
+        return False
+    import winreg
+
+    try:
+        with winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER, AUTOSTART_KEY, 0, winreg.KEY_SET_VALUE
+        ) as key:
+            if enabled:
+                winreg.SetValueEx(
+                    key, AUTOSTART_NAME, 0, winreg.REG_SZ, f'"{sys.executable}"'
+                )
+            else:
+                try:
+                    winreg.DeleteValue(key, AUTOSTART_NAME)
+                except FileNotFoundError:
+                    pass
+        return True
+    except OSError:
+        return False
+
+
 def combined_path(folder: str, file: str) -> str:
     """폴더 + 파일명을 합친 전체 경로. 파일이 없으면 폴더만."""
     if folder and file:

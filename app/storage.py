@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -24,7 +25,11 @@ class Storage:
         self.presets: list[Preset] = []
         self.patches: list[Patch] = []
         self.resources: list[ResourceEntry] = []
-        self.settings: dict = {"base_paths": {code: "" for code in COUNTRIES}}
+        self.settings: dict = {
+            "base_paths": {code: "" for code in COUNTRIES},
+            "auto_export": False,
+            "export_folder": "",
+        }
         self.load()
 
     def load(self) -> None:
@@ -37,10 +42,13 @@ class Storage:
         self.presets = [Preset.from_dict(d) for d in data.get("presets", [])]
         self.patches = [Patch.from_dict(d) for d in data.get("patches", [])]
         self.resources = [ResourceEntry.from_dict(d) for d in data.get("resources", [])]
-        saved_bases = data.get("settings", {}).get("base_paths", {})
+        saved = data.get("settings", {})
+        saved_bases = saved.get("base_paths", {})
         for code in COUNTRIES:
             if code in saved_bases:
                 self.settings["base_paths"][code] = saved_bases[code]
+        self.settings["auto_export"] = bool(saved.get("auto_export", False))
+        self.settings["export_folder"] = saved.get("export_folder", "")
 
     def save(self) -> None:
         self.dir.mkdir(parents=True, exist_ok=True)
@@ -53,6 +61,23 @@ class Storage:
         self.file.write_text(
             json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
         )
+        self._auto_export_presets()
+
+    def _auto_export_presets(self) -> None:
+        """자동 내보내기가 켜져 있으면 프리셋을 지정 폴더에 .json으로 저장한다."""
+        if not self.settings.get("auto_export") or not self.settings.get("export_folder"):
+            return
+        try:
+            folder = Path(self.settings["export_folder"])
+            folder.mkdir(parents=True, exist_ok=True)
+            for preset in self.presets:
+                safe_name = re.sub(r'[\\/:*?"<>|]', "_", preset.name).strip() or "preset"
+                (folder / f"{safe_name}.json").write_text(
+                    json.dumps(preset.to_dict(), ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+        except OSError:
+            pass  # 내보내기 실패가 앱 저장을 막으면 안 됨 (폴더 권한/네트워크 등)
 
     # ---- 조회 ----
     def base_paths(self) -> dict:

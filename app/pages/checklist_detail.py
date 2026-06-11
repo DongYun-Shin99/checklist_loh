@@ -1,15 +1,22 @@
-"""체크리스트 상세 화면: 항목 체크, 경로 열기, 메모. 기한은 패치를 따른다."""
+"""체크리스트 상세 화면: 항목/하위 항목 체크, 경로 열기, 메모, 즉석 항목 추가."""
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
+    QDialog,
+    QDialogButtonBox,
+    QFileDialog,
+    QFormLayout,
     QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
+    QMessageBox,
     QProgressBar,
     QPushButton,
     QScrollArea,
@@ -17,19 +24,95 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..models import Checklist, ChecklistItem, Patch, STATUS_DONE, STATUS_IN_PROGRESS
+from ..models import Checklist, ChecklistItem, Patch
 from ..storage import Storage
-from ..utils import dday_info, open_in_explorer
+from ..utils import combined_path, dday_info, open_in_explorer, path_display
 from ..widgets import country_badge
+
+
+class ChecklistItemDialog(QDialog):
+    """체크리스트 항목 추가/수정 다이얼로그 (이미 국가가 정해진 인스턴스용)."""
+
+    def __init__(self, parent=None, item: ChecklistItem | None = None, title: str = ""):
+        super().__init__(parent)
+        self.setWindowTitle(title or ("항목 수정" if item else "항목 추가"))
+        self.setMinimumWidth(480)
+
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        form.setSpacing(10)
+
+        self.desc_edit = QLineEdit(item.description if item else "")
+        self.desc_edit.setPlaceholderText("예: Gacha 테이블 수정")
+        form.addRow("작업 설명", self.desc_edit)
+
+        folder_row = QHBoxLayout()
+        self.folder_edit = QLineEdit(item.folder if item else "")
+        self.folder_edit.setPlaceholderText("폴더 경로 (선택)")
+        folder_row.addWidget(self.folder_edit, 1)
+        folder_btn = QPushButton("폴더")
+        folder_btn.setProperty("small", True)
+        folder_btn.clicked.connect(self._browse_folder)
+        folder_row.addWidget(folder_btn)
+        form.addRow("폴더 경로", folder_row)
+
+        file_row = QHBoxLayout()
+        self.file_edit = QLineEdit(item.file if item else "")
+        self.file_edit.setPlaceholderText("파일 명 (선택)")
+        file_row.addWidget(self.file_edit, 1)
+        file_btn = QPushButton("파일")
+        file_btn.setProperty("small", True)
+        file_btn.clicked.connect(self._browse_file)
+        file_row.addWidget(file_btn)
+        form.addRow("파일 명", file_row)
+        layout.addLayout(form)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("확인")
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("취소")
+        buttons.accepted.connect(self._on_accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        self.desc_edit.setFocus()
+
+    def _browse_folder(self) -> None:
+        path = QFileDialog.getExistingDirectory(self, "폴더 선택")
+        if path:
+            self.folder_edit.setText(path)
+
+    def _browse_file(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "파일 선택")
+        if path:
+            p = Path(path)
+            self.folder_edit.setText(str(p.parent))
+            self.file_edit.setText(p.name)
+
+    def _on_accept(self) -> None:
+        if not self.desc_edit.text().strip():
+            QMessageBox.warning(self, "입력 필요", "작업 설명을 입력해주세요.")
+            return
+        self.accept()
+
+    def result_values(self) -> tuple[str, str, str]:
+        return (
+            self.desc_edit.text().strip(),
+            self.folder_edit.text().strip(),
+            self.file_edit.text().strip(),
+        )
 
 
 class ItemRow(QFrame):
     statusChanged = Signal()
+    menuRequested = Signal(object, object)  # item, global pos
 
-    def __init__(self, item: ChecklistItem, storage: Storage, read_only: bool = False):
+    def __init__(self, item: ChecklistItem, storage: Storage, is_child: bool = False):
         super().__init__()
         self.item = item
         self.storage = storage
+        self.is_child = is_child
         self.setProperty("card", True)
 
         layout = QVBoxLayout(self)
@@ -38,19 +121,21 @@ class ItemRow(QFrame):
 
         top = QHBoxLayout()
         self.checkbox = QCheckBox(item.description)
-        self.checkbox.setChecked(item.done)
-        self.checkbox.setEnabled(not read_only)
-        self.checkbox.toggled.connect(self._on_toggled)
+        self.checkbox.setChecked(item.is_done)
+        self.checkbox.clicked.connect(self._on_clicked)
         top.addWidget(self.checkbox, 1)
         self.status_label = QLabel()
         top.addWidget(self.status_label)
         layout.addLayout(top)
 
-        if item.path:
+        if item.folder or item.file:
             path_row = QHBoxLayout()
             path_row.setContentsMargins(26, 0, 0, 0)
-            exists = os.path.exists(item.path)
-            path_label = QLabel(f"📁 {item.path}" + ("" if exists else "   ⚠ 경로 없음"))
+            full = combined_path(item.folder, item.file)
+            exists = os.path.exists(full)
+            path_label = QLabel(
+                path_display(item.folder, item.file) + ("" if exists else "   ⚠ 경로 없음")
+            )
             path_label.setStyleSheet(
                 "border: none; font-size: 12px; color: "
                 + ("#6b7280" if exists else "#dc2626")
@@ -60,7 +145,7 @@ class ItemRow(QFrame):
             open_btn = QPushButton("열기")
             open_btn.setProperty("small", True)
             open_btn.setEnabled(exists)
-            open_btn.clicked.connect(lambda: open_in_explorer(item.path))
+            open_btn.clicked.connect(lambda: open_in_explorer(full))
             path_row.addWidget(open_btn)
             layout.addLayout(path_row)
 
@@ -69,15 +154,17 @@ class ItemRow(QFrame):
         self.memo_edit = QLineEdit(item.memo)
         self.memo_edit.setProperty("flat", True)
         self.memo_edit.setPlaceholderText("메모 추가...")
-        self.memo_edit.setReadOnly(read_only)
         self.memo_edit.textEdited.connect(self._on_memo_edited)
         memo_row.addWidget(self.memo_edit)
         layout.addLayout(memo_row)
 
         self._apply_status_style()
 
-    def _on_toggled(self, checked: bool) -> None:
-        self.item.status = STATUS_DONE if checked else STATUS_IN_PROGRESS
+    def contextMenuEvent(self, event):
+        self.menuRequested.emit(self.item, event.globalPos())
+
+    def _on_clicked(self, checked: bool) -> None:
+        self.item.set_done(checked)
         self.storage.save()
         self._apply_status_style()
         self.statusChanged.emit()
@@ -87,7 +174,7 @@ class ItemRow(QFrame):
         self.storage.save()
 
     def _apply_status_style(self) -> None:
-        if self.item.done:
+        if self.item.is_done:
             self.status_label.setText("완료 ✓")
             self.status_label.setStyleSheet(
                 "border:none; color:#059669; font-weight:bold; font-size:12px;"
@@ -129,6 +216,10 @@ class ChecklistDetailPage(QWidget):
         header.addStretch()
         self.dday_label = QLabel()
         header.addWidget(self.dday_label)
+        add_btn = QPushButton("＋ 항목 추가")
+        add_btn.setProperty("primary", True)
+        add_btn.clicked.connect(self._add_item)
+        header.addWidget(add_btn)
         layout.addLayout(header)
 
         progress_row = QHBoxLayout()
@@ -152,6 +243,11 @@ class ChecklistDetailPage(QWidget):
         self.items_layout.addStretch()
         scroll.setWidget(self.items_host)
         layout.addWidget(scroll, 1)
+
+        self.empty_label = QLabel("항목이 없습니다. [＋ 항목 추가]로 작업을 추가해보세요.")
+        self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.empty_label.setProperty("muted", True)
+        layout.addWidget(self.empty_label)
 
     def set_checklist(self, patch: Patch, checklist: Checklist) -> None:
         self.patch = patch
@@ -187,18 +283,100 @@ class ChecklistDetailPage(QWidget):
             entry = self.items_layout.takeAt(0)
             if entry.widget():
                 entry.widget().deleteLater()
+            elif entry.layout():
+                self._clear_layout(entry.layout())
+
+        self.empty_label.setVisible(not self.checklist.items)
 
         items = list(self.checklist.items)
         if self.sort_toggle.isChecked():
-            items.sort(key=lambda i: i.done)  # 진행중 먼저, 원래 순서 유지(안정 정렬)
+            items.sort(key=lambda i: i.is_done)  # 진행중 먼저, 원래 순서 유지(안정 정렬)
         for item in items:
-            row = ItemRow(item, self.storage)
-            row.statusChanged.connect(self._on_item_status_changed)
+            self._insert_row(item, is_child=False)
+            children = list(item.children)
+            if self.sort_toggle.isChecked():
+                children.sort(key=lambda i: i.is_done)
+            for child in children:
+                self._insert_row(child, is_child=True)
+
+    def _clear_layout(self, layout) -> None:
+        while layout.count():
+            entry = layout.takeAt(0)
+            if entry.widget():
+                entry.widget().deleteLater()
+
+    def _insert_row(self, item: ChecklistItem, is_child: bool) -> None:
+        row = ItemRow(item, self.storage, is_child=is_child)
+        row.statusChanged.connect(self._on_item_status_changed)
+        row.menuRequested.connect(self._show_item_menu)
+        if is_child:
+            wrapper = QHBoxLayout()
+            wrapper.addSpacing(34)
+            wrapper.addWidget(row)
+            self.items_layout.insertLayout(self.items_layout.count() - 1, wrapper)
+        else:
             self.items_layout.insertWidget(self.items_layout.count() - 1, row)
 
     def _on_item_status_changed(self) -> None:
         self._update_progress()
         if self.checklist.is_done:
             self.checklistCompleted.emit()
-        if self.sort_toggle.isChecked():
+        # 부모/하위 상태 표시 동기화를 위해 다시 그린다 (시그널 처리 후로 미룸)
+        QTimer.singleShot(0, self._rebuild_items)
+
+    # ---- 항목 추가/수정/삭제 ----
+    def _find_parent_list(self, item: ChecklistItem) -> list | None:
+        if item in self.checklist.items:
+            return self.checklist.items
+        for top in self.checklist.items:
+            if item in top.children:
+                return top.children
+        return None
+
+    def _add_item(self) -> None:
+        dialog = ChecklistItemDialog(self, title="항목 추가")
+        if dialog.exec():
+            desc, folder, file = dialog.result_values()
+            self.checklist.items.append(
+                ChecklistItem(description=desc, folder=folder, file=file)
+            )
+            self.storage.save()
+            self._update_progress()
             self._rebuild_items()
+
+    def _show_item_menu(self, item: ChecklistItem, global_pos) -> None:
+        menu = QMenu(self)
+        edit_action = menu.addAction("항목 수정")
+        child_action = None
+        if item in self.checklist.items:  # 깊이 1단계 제한
+            child_action = menu.addAction("하위 항목 추가")
+        menu.addSeparator()
+        delete_action = menu.addAction("항목 삭제")
+        chosen = menu.exec(global_pos)
+        if chosen is None:
+            return
+        if chosen == edit_action:
+            dialog = ChecklistItemDialog(self, item=item)
+            if dialog.exec():
+                item.description, item.folder, item.file = dialog.result_values()
+        elif child_action and chosen == child_action:
+            dialog = ChecklistItemDialog(self, title="하위 항목 추가")
+            if dialog.exec():
+                desc, folder, file = dialog.result_values()
+                item.children.append(
+                    ChecklistItem(description=desc, folder=folder, file=file)
+                )
+        elif chosen == delete_action:
+            label = f'"{item.description}"'
+            warn = " 하위 항목도 함께 삭제됩니다." if item.children else ""
+            answer = QMessageBox.question(self, "항목 삭제", f"{label} 항목을 삭제할까요?{warn}")
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+            siblings = self._find_parent_list(item)
+            if siblings is not None:
+                siblings.remove(item)
+        else:
+            return
+        self.storage.save()
+        self._update_progress()
+        self._rebuild_items()

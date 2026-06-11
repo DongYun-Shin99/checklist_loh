@@ -13,6 +13,8 @@ from PySide6.QtWidgets import QApplication
 
 from app.main_window import MainWindow
 from app.models import (
+    Checklist,
+    ChecklistItem,
     Patch,
     Preset,
     PresetItem,
@@ -24,26 +26,39 @@ from app.storage import Storage
 from app.style import STYLESHEET
 
 
+def paths(folder_kr, file_kr="", folder_tw="", file_tw="", folder_jp="", file_jp=""):
+    return {
+        "KR": {"folder": folder_kr, "file": file_kr},
+        "TW": {"folder": folder_tw, "file": file_tw},
+        "JP": {"folder": folder_jp, "file": file_jp},
+    }
+
+
 def build_sample(storage: Storage) -> None:
     hero_preset = Preset(
         name="영웅 추가",
         description="신규 영웅 추가 작업",
         items=[
             PresetItem(
-                "영웅 데이터 수정",
-                {"KR": "/tmp/build/kor/heroes", "TW": "/tmp/build/tw/heroes", "JP": "/tmp/build/jpn/heroes"},
+                "Gacha 테이블 수정",
+                paths("/tmp", "gacha_table.json", "/tmp", "gacha_table.json", "/tmp", "gacha_table.json"),
+                children=[
+                    PresetItem("상시 소환 수정"),
+                    PresetItem("상시 소환 수정에서 기원 무기 추가"),
+                    PresetItem("픽업 소환풀에 영웅 추가"),
+                ],
             ),
-            PresetItem("스킬 테이블 갱신", {"KR": "/tmp", "TW": "/tmp", "JP": "/tmp"}),
-            PresetItem("일러스트 리소스 반영", {"KR": "/없는/경로/illust", "TW": "", "JP": ""}),
-            PresetItem("밸런스 검수", {"KR": "", "TW": "", "JP": ""}),
+            PresetItem("스킬 테이블 갱신", paths("/tmp", "", "/tmp", "", "/tmp", "")),
+            PresetItem("일러스트 리소스 반영", paths("/없는/경로/illust")),
+            PresetItem("밸런스 검수"),
         ],
     )
     shop_preset = Preset(
         name="상점 업데이트",
         description="상점 상품 교체",
         items=[
-            PresetItem("상품 테이블 교체", {"KR": "/tmp", "TW": "/tmp", "JP": "/tmp"}),
-            PresetItem("배너 이미지 교체", {"KR": "/tmp", "TW": "/tmp", "JP": "/tmp"}),
+            PresetItem("상품 테이블 교체", paths("/tmp", "shop.json", "/tmp", "shop.json", "/tmp", "shop.json")),
+            PresetItem("배너 이미지 교체", paths("/tmp", "", "/tmp", "", "/tmp", "")),
         ],
     )
     storage.presets.extend([hero_preset, shop_preset])
@@ -58,11 +73,20 @@ def build_sample(storage: Storage) -> None:
         created_at="2026-06-01 10:00",
     )
     hero = create_checklist_from_preset(hero_preset, "KR", "영웅 추가")
-    hero.items[0].status = STATUS_DONE
+    hero.items[0].children[0].status = STATUS_DONE
+    hero.items[0].children[1].status = STATUS_DONE
     hero.items[1].status = STATUS_DONE
     hero.items[1].memo = "신규 스킬 이펙트는 별도 확인 필요"
     shop = create_checklist_from_preset(shop_preset, "KR", "상점 업데이트")
-    kr_patch.checklists.extend([hero, shop])
+    # 즉석(프리셋 없는) 체크리스트 + 직접 추가한 항목
+    adhoc = Checklist(
+        name="긴급 핫픽스",
+        items=[
+            ChecklistItem(description="크래시 원인 파악", folder="/tmp", file="crash.log"),
+            ChecklistItem(description="수정 빌드 배포"),
+        ],
+    )
+    kr_patch.checklists.extend([hero, shop, adhoc])
 
     # 진행 중인 패치 (일본)
     jp_patch = Patch(
@@ -85,16 +109,16 @@ def build_sample(storage: Storage) -> None:
         )
         c = create_checklist_from_preset(hero_preset, code, "영웅 추가")
         for item in c.items:
-            item.status = STATUS_DONE
+            item.set_done(True)
         p.checklists.append(c)
         done_patches.append(p)
 
     storage.patches.extend([kr_patch, jp_patch, *done_patches])
 
     storage.resources.extend([
-        ResourceEntry(name="영웅 아이콘", path="/tmp"),
-        ResourceEntry(name="배너 일러스트", path="/tmp/build/kor/banners"),
-        ResourceEntry(name="사운드 리소스", path="/없는/경로/sounds"),
+        ResourceEntry(name="영웅 아이콘", folder="/tmp", file=""),
+        ResourceEntry(name="배너 일러스트", folder="/tmp/build/kor/banners", file="banner.png"),
+        ResourceEntry(name="사운드 리소스", folder="/없는/경로/sounds", file=""),
     ])
     storage.save()
 
@@ -126,19 +150,25 @@ def main() -> int:
         window._open_patch(active[0].id)
         shot("2_patch_detail")
 
-        # 3) 체크리스트 상세 (세세한 항목)
+        # 3) 체크리스트 상세 (하위 항목 포함)
         hero = active[0].checklists[0]
         window._open_checklist(hero.id)
         shot("3_checklist_detail")
 
-        # 항목 토글/진행률 집계 확인
-        before_patch = active[0].progress
-        hero.items[2].status = STATUS_DONE
+        # 하위 항목/진행률 동작 확인
+        gacha = hero.items[0]
+        assert gacha.has_children and not gacha.is_done
+        gacha.children[2].status = STATUS_DONE
+        assert gacha.is_done  # 하위 전부 완료 → 부모 완료
+        gacha.set_done(False)
+        assert not gacha.is_done
+        gacha.set_done(True)  # 부모 일괄 토글
+        assert all(c.is_done for c in gacha.children)
+        done, total = hero.progress
+        assert total == 6  # 최하위 기준: 하위 3 + 일반 3
         storage.save()
-        assert active[0].progress[0] == before_patch[0] + 1
-        assert 0 < active[0].percent < 100
 
-        # 4) 프리셋 편집기
+        # 4) 프리셋 편집기 (하위 항목 트리)
         window._on_nav(1)
         shot("4_preset_editor")
 
@@ -155,15 +185,22 @@ def main() -> int:
         assert len(reloaded.presets) == 2
         assert len(reloaded.active_patches()) == 2
         assert len(reloaded.archived_patches()) == 2
-        assert reloaded.active_patches()[0].country == "KR"
-        assert len(reloaded.active_patches()[0].checklists) == 2
-        assert reloaded.active_patches()[0].checklists[0].items[1].memo == "신규 스킬 이펙트는 별도 확인 필요"
-        found_patch, found_checklist = reloaded.find_checklist(
-            reloaded.active_patches()[1].checklists[0].id
-        )
-        assert found_patch is not None and found_patch.country == "JP"
-        assert len(reloaded.resources) == 3
-        assert reloaded.resources[0].name == "영웅 아이콘"
+        first = reloaded.active_patches()[0]
+        assert first.country == "KR"
+        assert len(first.checklists) == 3
+        assert first.checklists[0].items[0].children[0].description == "상시 소환 수정"
+        assert first.checklists[0].items[0].file == "gacha_table.json"
+        assert first.checklists[2].preset_name == ""  # 즉석 체크리스트
+        assert first.checklists[2].items[0].file == "crash.log"
+        assert reloaded.resources[1].file == "banner.png"
+
+        # 구버전 데이터 호환 확인 (path 문자열 → 폴더 칸)
+        old_item = ChecklistItem.from_dict({"description": "옛 항목", "path": "/old/path"})
+        assert old_item.folder == "/old/path" and old_item.file == ""
+        old_preset_item = PresetItem.from_dict({"description": "옛", "paths": {"KR": "/old/kr"}})
+        assert old_preset_item.paths["KR"]["folder"] == "/old/kr"
+        old_resource = ResourceEntry.from_dict({"name": "옛 리소스", "path": "/old/res"})
+        assert old_resource.folder == "/old/res"
 
     print("스모크 테스트 통과")
     return 0

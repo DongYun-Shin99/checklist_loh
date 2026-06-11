@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QBrush, QColor
@@ -24,18 +25,18 @@ from PySide6.QtWidgets import (
 
 from ..models import ResourceEntry
 from ..storage import Storage
-from ..utils import open_in_explorer
+from ..utils import combined_path, open_in_explorer
 
 ENTRY_ROLE = Qt.ItemDataRole.UserRole
 
 
 class ResourceDialog(QDialog):
-    """리소스 경로 추가/수정 다이얼로그."""
+    """리소스 경로 추가/수정 다이얼로그 (폴더/파일 분리 입력)."""
 
     def __init__(self, parent=None, entry: ResourceEntry | None = None):
         super().__init__(parent)
         self.setWindowTitle("리소스 경로 수정" if entry else "리소스 경로 추가")
-        self.setMinimumWidth(480)
+        self.setMinimumWidth(500)
 
         layout = QVBoxLayout(self)
         form = QFormLayout()
@@ -45,19 +46,25 @@ class ResourceDialog(QDialog):
         self.name_edit.setPlaceholderText("예: 영웅 아이콘")
         form.addRow("이름 (리소스 설명)", self.name_edit)
 
-        path_row = QHBoxLayout()
-        self.path_edit = QLineEdit(entry.path if entry else "")
-        self.path_edit.setPlaceholderText("폴더 경로 또는 파일 경로")
-        path_row.addWidget(self.path_edit, 1)
-        file_btn = QPushButton("파일")
-        file_btn.setProperty("small", True)
-        file_btn.clicked.connect(self._browse_file)
-        path_row.addWidget(file_btn)
+        folder_row = QHBoxLayout()
+        self.folder_edit = QLineEdit(entry.folder if entry else "")
+        self.folder_edit.setPlaceholderText("폴더 경로")
+        folder_row.addWidget(self.folder_edit, 1)
         folder_btn = QPushButton("폴더")
         folder_btn.setProperty("small", True)
         folder_btn.clicked.connect(self._browse_folder)
-        path_row.addWidget(folder_btn)
-        form.addRow("폴더 경로 / 파일 명", path_row)
+        folder_row.addWidget(folder_btn)
+        form.addRow("폴더 경로", folder_row)
+
+        file_row = QHBoxLayout()
+        self.file_edit = QLineEdit(entry.file if entry else "")
+        self.file_edit.setPlaceholderText("파일 명 (선택 — 비우면 폴더만)")
+        file_row.addWidget(self.file_edit, 1)
+        file_btn = QPushButton("파일")
+        file_btn.setProperty("small", True)
+        file_btn.clicked.connect(self._browse_file)
+        file_row.addWidget(file_btn)
+        form.addRow("파일 명", file_row)
         layout.addLayout(form)
 
         buttons = QDialogButtonBox(
@@ -71,27 +78,34 @@ class ResourceDialog(QDialog):
 
         self.name_edit.setFocus()
 
-    def _browse_file(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "파일 선택")
-        if path:
-            self.path_edit.setText(path)
-
     def _browse_folder(self) -> None:
         path = QFileDialog.getExistingDirectory(self, "폴더 선택")
         if path:
-            self.path_edit.setText(path)
+            self.folder_edit.setText(path)
+
+    def _browse_file(self) -> None:
+        """파일을 고르면 폴더/파일 칸이 자동으로 나뉘어 채워진다."""
+        path, _ = QFileDialog.getOpenFileName(self, "파일 선택")
+        if path:
+            p = Path(path)
+            self.folder_edit.setText(str(p.parent))
+            self.file_edit.setText(p.name)
 
     def _on_accept(self) -> None:
         if not self.name_edit.text().strip():
             QMessageBox.warning(self, "입력 필요", "이름(리소스 설명)을 입력해주세요.")
             return
-        if not self.path_edit.text().strip():
-            QMessageBox.warning(self, "입력 필요", "경로를 입력해주세요.")
+        if not self.folder_edit.text().strip():
+            QMessageBox.warning(self, "입력 필요", "폴더 경로를 입력해주세요.")
             return
         self.accept()
 
-    def result_values(self) -> tuple[str, str]:
-        return self.name_edit.text().strip(), self.path_edit.text().strip()
+    def result_values(self) -> tuple[str, str, str]:
+        return (
+            self.name_edit.text().strip(),
+            self.folder_edit.text().strip(),
+            self.file_edit.text().strip(),
+        )
 
 
 class ResourcePage(QWidget):
@@ -115,9 +129,10 @@ class ResourcePage(QWidget):
         body.setSpacing(12)
 
         self.tree = QTreeWidget()
-        self.tree.setColumnCount(2)
-        self.tree.setHeaderLabels(["이름", "경로"])
-        self.tree.setColumnWidth(0, 220)
+        self.tree.setColumnCount(3)
+        self.tree.setHeaderLabels(["이름", "폴더 경로", "파일 명"])
+        self.tree.setColumnWidth(0, 180)
+        self.tree.setColumnWidth(1, 360)
         self.tree.setRootIsDecorated(False)
         self.tree.itemDoubleClicked.connect(lambda *_: self._open_selected())
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -159,10 +174,11 @@ class ResourcePage(QWidget):
         self.tree.clear()
         self.empty_label.setVisible(not self.storage.resources)
         for entry in self.storage.resources:
-            exists = os.path.exists(entry.path)
+            exists = os.path.exists(combined_path(entry.folder, entry.file))
             row = QTreeWidgetItem([
                 entry.name,
-                entry.path + ("" if exists else "   ⚠ 경로 없음"),
+                entry.folder + ("" if exists else "   ⚠ 경로 없음"),
+                entry.file,
             ])
             row.setData(0, ENTRY_ROLE, entry)
             if not exists:
@@ -177,8 +193,10 @@ class ResourcePage(QWidget):
     def _add_entry(self) -> None:
         dialog = ResourceDialog(self)
         if dialog.exec():
-            name, path = dialog.result_values()
-            self.storage.resources.append(ResourceEntry(name=name, path=path))
+            name, folder, file = dialog.result_values()
+            self.storage.resources.append(
+                ResourceEntry(name=name, folder=folder, file=file)
+            )
             self.storage.save()
             self.refresh()
 
@@ -189,7 +207,7 @@ class ResourcePage(QWidget):
             return
         dialog = ResourceDialog(self, entry)
         if dialog.exec():
-            entry.name, entry.path = dialog.result_values()
+            entry.name, entry.folder, entry.file = dialog.result_values()
             self.storage.save()
             self.refresh()
 
@@ -208,10 +226,11 @@ class ResourcePage(QWidget):
         entry = self._selected_entry()
         if not entry:
             return
-        if not os.path.exists(entry.path):
-            QMessageBox.warning(self, "경로 없음", f"경로가 존재하지 않습니다:\n{entry.path}")
+        full = combined_path(entry.folder, entry.file)
+        if not os.path.exists(full):
+            QMessageBox.warning(self, "경로 없음", f"경로가 존재하지 않습니다:\n{full}")
             return
-        open_in_explorer(entry.path)
+        open_in_explorer(full)
 
     def _show_menu(self, pos) -> None:
         item = self.tree.itemAt(pos)

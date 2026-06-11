@@ -41,3 +41,20 @@ def open_in_explorer(path: str) -> None:
     else:
         target = p if p.is_dir() else p.parent
         subprocess.Popen(["xdg-open", str(target)])
+
+
+def combined_path(folder: str, file: str) -> str:
+    """폴더 + 파일명을 합친 전체 경로. 파일이 없으면 폴더만."""
+    if folder and file:
+        return os.path.join(folder, file)
+    return folder or file
+
+
+def path_display(folder: str, file: str) -> str:
+    """항목 행에 표시할 경로 텍스트."""
+    parts = []
+    if folder:
+        parts.append(f"📁 {folder}")
+    if file:
+        parts.append(f"📄 {file}")
+    return "   ".join(parts)

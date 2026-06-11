@@ -171,19 +171,18 @@ class PatchDetailPage(QWidget):
 
     # ---- 동작 ----
     def _add_checklist(self) -> None:
-        if not self.storage.presets:
-            QMessageBox.information(
-                self, "프리셋 없음",
-                "체크리스트를 추가하려면 먼저 프리셋이 필요합니다.\n프리셋 메뉴에서 만들어주세요.",
-            )
-            return
         dialog = AddChecklistDialog(self.storage.presets, self.patch, self)
         if dialog.exec():
             preset, name = dialog.result_values()
-            checklist = create_checklist_from_preset(preset, self.patch.country, name)
+            if preset:
+                checklist = create_checklist_from_preset(preset, self.patch.country, name)
+            else:
+                checklist = Checklist(name=name)  # 빈 체크리스트: 상세 화면에서 항목 직접 추가
             self.patch.checklists.append(checklist)
             self.storage.save()
             self.refresh()
+            if not preset:
+                self.openChecklistRequested.emit(checklist.id)
 
     def _show_card_menu(self, checklist_id: str, global_pos) -> None:
         checklist = next(

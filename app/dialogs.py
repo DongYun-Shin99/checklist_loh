@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFormLayout,
     QLineEdit,
+    QRadioButton,
     QTextBrowser,
     QVBoxLayout,
 )
@@ -84,15 +85,24 @@ class NewPatchDialog(QDialog):
 
 
 class AddChecklistDialog(QDialog):
-    """패치에 작업 묶음(체크리스트)을 추가하는 다이얼로그. 국가는 패치를 따라간다."""
+    """패치에 작업 묶음(체크리스트)을 추가하는 다이얼로그. 국가는 패치를 따라간다.
+
+    프리셋에서 가져오거나, 루틴 외 작업을 위한 빈 체크리스트를 만들 수 있다.
+    """
 
     def __init__(self, presets: list[Preset], patch: Patch, parent=None):
         super().__init__(parent)
         self.setWindowTitle(f"체크리스트 추가 — {patch.name} ({patch.country_name})")
-        self.setMinimumWidth(380)
+        self.setMinimumWidth(420)
         self._name_edited = False
 
         layout = QVBoxLayout(self)
+
+        self.preset_radio = QRadioButton("프리셋에서 가져오기 (루틴 업무)")
+        self.empty_radio = QRadioButton("빈 체크리스트 (항목 직접 추가)")
+        layout.addWidget(self.preset_radio)
+        layout.addWidget(self.empty_radio)
+
         form = QFormLayout()
         form.setSpacing(10)
 
@@ -112,7 +122,20 @@ class AddChecklistDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
+        self.preset_radio.toggled.connect(self._on_mode_changed)
         self.preset_combo.currentIndexChanged.connect(self._update_default_name)
+
+        if presets:
+            self.preset_radio.setChecked(True)
+        else:
+            self.preset_radio.setEnabled(False)
+            self.preset_radio.setText("프리셋에서 가져오기 (프리셋 없음)")
+            self.empty_radio.setChecked(True)
+        self._on_mode_changed()
+
+    def _on_mode_changed(self, *_):
+        from_preset = self.preset_radio.isChecked()
+        self.preset_combo.setEnabled(from_preset)
         self._update_default_name()
 
     def _on_name_edited(self) -> None:
@@ -121,14 +144,19 @@ class AddChecklistDialog(QDialog):
     def _update_default_name(self) -> None:
         if self._name_edited and self.name_edit.text().strip():
             return
-        preset = self.preset_combo.currentData()
-        if preset:
-            self.name_edit.setText(preset.name)
-            self._name_edited = False
+        if self.preset_radio.isChecked():
+            preset = self.preset_combo.currentData()
+            if preset:
+                self.name_edit.setText(preset.name)
+        else:
+            self.name_edit.setText("새 체크리스트")
+        self._name_edited = False
 
-    def result_values(self) -> tuple[Preset, str]:
-        preset = self.preset_combo.currentData()
-        name = self.name_edit.text().strip() or preset.name
+    def result_values(self) -> tuple[Preset | None, str]:
+        """선택한 (프리셋 또는 None, 이름). 프리셋이 None이면 빈 체크리스트."""
+        preset = self.preset_combo.currentData() if self.preset_radio.isChecked() else None
+        default = preset.name if preset else "새 체크리스트"
+        name = self.name_edit.text().strip() or default
         return preset, name
 
 
@@ -154,13 +182,19 @@ class ArchiveViewDialog(QDialog):
 
     @staticmethod
     def _build_html(patch: Patch, c: Checklist) -> str:
-        rows = []
-        for item in c.items:
-            mark = "✔" if item.done else "○"
-            color = "#059669" if item.done else "#d97706"
+        def render(item, indent: int) -> str:
+            mark = "✔" if item.is_done else "○"
+            color = "#059669" if item.is_done else "#d97706"
+            margin = indent * 22
+            path_text = "   ".join(
+                part for part in (
+                    f"📁 {item.folder}" if item.folder else "",
+                    f"📄 {item.file}" if item.file else "",
+                ) if part
+            )
             path_line = (
-                f'<div style="color:#6b7280; font-size:12px;">📁 {item.path}</div>'
-                if item.path
+                f'<div style="color:#6b7280; font-size:12px;">{path_text}</div>'
+                if path_text
                 else ""
             )
             memo_line = (
@@ -168,14 +202,19 @@ class ArchiveViewDialog(QDialog):
                 if item.memo
                 else ""
             )
-            rows.append(
-                f'<div style="margin-bottom:10px;">'
+            html = (
+                f'<div style="margin: 0 0 10px {margin}px;">'
                 f'<span style="color:{color}; font-weight:bold;">{mark}</span> '
                 f"{item.description}{path_line}{memo_line}</div>"
             )
+            for child in item.children:
+                html += render(child, indent + 1)
+            return html
+
+        rows = [render(item, 0) for item in c.items]
         header = (
             f"<h3>{c.name}</h3>"
-            f'<p style="color:#6b7280;">패치: {patch.name} · 프리셋: {c.preset_name} · 국가: {patch.country_name}<br>'
+            f'<p style="color:#6b7280;">패치: {patch.name} · 프리셋: {c.preset_name or "직접 작성"} · 국가: {patch.country_name}<br>'
             f"패치일: {patch.due_date or '없음'} · 완료일: {patch.completed_at or '-'}</p><hr>"
         )
         return header + "".join(rows)

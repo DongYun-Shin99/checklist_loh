@@ -1,14 +1,14 @@
-"""프리셋 관리 화면: 목록 + 편집기, 내보내기/불러오기."""
+"""프리셋 관리 화면: 목록 + 편집기(하위 항목 지원), 내보내기/불러오기."""
 from __future__ import annotations
 
 import json
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QAbstractItemView,
     QFileDialog,
     QFormLayout,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -17,6 +17,8 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
+    QTreeWidget,
+    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -85,7 +87,7 @@ class PresetPage(QWidget):
         right.addLayout(meta_form)
 
         items_header = QHBoxLayout()
-        items_label = QLabel("항목 (드래그로 순서 변경)")
+        items_label = QLabel("항목")
         items_label.setProperty("muted", True)
         items_header.addWidget(items_label)
         items_header.addStretch()
@@ -93,18 +95,29 @@ class PresetPage(QWidget):
         add_item_btn.setProperty("small", True)
         add_item_btn.clicked.connect(self._add_item)
         items_header.addWidget(add_item_btn)
-        del_item_btn = QPushButton("선택 항목 삭제")
+        add_child_btn = QPushButton("＋ 하위 항목")
+        add_child_btn.setProperty("small", True)
+        add_child_btn.clicked.connect(self._add_child_item)
+        items_header.addWidget(add_child_btn)
+        up_btn = QPushButton("↑")
+        up_btn.setProperty("small", True)
+        up_btn.clicked.connect(lambda: self._move_item(-1))
+        items_header.addWidget(up_btn)
+        down_btn = QPushButton("↓")
+        down_btn.setProperty("small", True)
+        down_btn.clicked.connect(lambda: self._move_item(1))
+        items_header.addWidget(down_btn)
+        del_item_btn = QPushButton("삭제")
         del_item_btn.setProperty("small", True)
         del_item_btn.setProperty("danger", True)
         del_item_btn.clicked.connect(self._delete_item)
         items_header.addWidget(del_item_btn)
         right.addLayout(items_header)
 
-        self.item_list = QListWidget()
-        self.item_list.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
-        self.item_list.currentItemChanged.connect(self._on_item_selected)
-        self.item_list.model().rowsMoved.connect(self._on_rows_moved)
-        right.addWidget(self.item_list, 1)
+        self.item_tree = QTreeWidget()
+        self.item_tree.setHeaderHidden(True)
+        self.item_tree.currentItemChanged.connect(self._on_item_selected)
+        right.addWidget(self.item_tree, 1)
 
         # 선택된 항목 편집 폼
         self.item_form_frame = QFrame()
@@ -124,28 +137,51 @@ class PresetPage(QWidget):
         desc_row.addWidget(self.item_desc_edit, 1)
         form_layout.addLayout(desc_row)
 
-        self.path_edits: dict[str, QLineEdit] = {}
-        for code, country_name in COUNTRIES.items():
-            row = QHBoxLayout()
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(6)
+        grid.setVerticalSpacing(6)
+        grid.addWidget(QLabel(""), 0, 0)
+        folder_header = QLabel("폴더 경로")
+        folder_header.setProperty("muted", True)
+        grid.addWidget(folder_header, 0, 1)
+        file_header = QLabel("파일 명")
+        file_header.setProperty("muted", True)
+        grid.addWidget(file_header, 0, 3)
+
+        self.folder_edits: dict[str, QLineEdit] = {}
+        self.file_edits: dict[str, QLineEdit] = {}
+        for row, (code, country_name) in enumerate(COUNTRIES.items(), start=1):
             label = QLabel(country_name)
-            label.setFixedWidth(58)
-            row.addWidget(label)
-            edit = QLineEdit()
-            edit.setPlaceholderText(f"{country_name} 빌드의 파일/폴더 경로 (비워두면 경로 없음)")
-            edit.textEdited.connect(
-                lambda text, c=code: self._on_item_path_edited(c, text)
+            label.setFixedWidth(40)
+            grid.addWidget(label, row, 0)
+
+            folder_edit = QLineEdit()
+            folder_edit.setPlaceholderText("폴더 경로 (비워두면 없음)")
+            folder_edit.textEdited.connect(
+                lambda text, c=code: self._on_item_path_edited(c, "folder", text)
             )
-            row.addWidget(edit, 1)
-            file_btn = QPushButton("파일")
-            file_btn.setProperty("small", True)
-            file_btn.clicked.connect(lambda _, c=code: self._browse(c, folder=False))
-            row.addWidget(file_btn)
+            grid.addWidget(folder_edit, row, 1)
             folder_btn = QPushButton("폴더")
             folder_btn.setProperty("small", True)
-            folder_btn.clicked.connect(lambda _, c=code: self._browse(c, folder=True))
-            row.addWidget(folder_btn)
-            form_layout.addLayout(row)
-            self.path_edits[code] = edit
+            folder_btn.clicked.connect(lambda _, c=code: self._browse_folder(c))
+            grid.addWidget(folder_btn, row, 2)
+
+            file_edit = QLineEdit()
+            file_edit.setPlaceholderText("파일 명 (선택)")
+            file_edit.textEdited.connect(
+                lambda text, c=code: self._on_item_path_edited(c, "file", text)
+            )
+            grid.addWidget(file_edit, row, 3)
+            file_btn = QPushButton("파일")
+            file_btn.setProperty("small", True)
+            file_btn.clicked.connect(lambda _, c=code: self._browse_file(c))
+            grid.addWidget(file_btn, row, 4)
+
+            self.folder_edits[code] = folder_edit
+            self.file_edits[code] = file_edit
+        grid.setColumnStretch(1, 3)
+        grid.setColumnStretch(3, 2)
+        form_layout.addLayout(grid)
 
         right.addWidget(self.item_form_frame)
 
@@ -193,20 +229,34 @@ class PresetPage(QWidget):
         preset = self.current_preset
         self.name_edit.setText(preset.name)
         self.desc_edit.setText(preset.description)
-        self.item_list.clear()
-        for item in preset.items:
-            self._append_item_entry(item)
+        self._rebuild_tree()
         self._loading = False
-        if self.item_list.count():
-            self.item_list.setCurrentRow(0)
+        if self.item_tree.topLevelItemCount():
+            self.item_tree.setCurrentItem(self.item_tree.topLevelItem(0))
         else:
             self._load_item_form()
 
-    def _append_item_entry(self, item: PresetItem) -> QListWidgetItem:
-        entry = QListWidgetItem(item.description or "(설명 없음)")
-        entry.setData(ITEM_ROLE, item)
-        self.item_list.addItem(entry)
-        return entry
+    def _rebuild_tree(self, select_item: PresetItem | None = None) -> None:
+        was_loading = self._loading
+        self._loading = True
+        self.item_tree.clear()
+        to_select = None
+        for item in self.current_preset.items:
+            node = QTreeWidgetItem([item.description or "(설명 없음)"])
+            node.setData(0, ITEM_ROLE, item)
+            self.item_tree.addTopLevelItem(node)
+            if item is select_item:
+                to_select = node
+            for child in item.children:
+                child_node = QTreeWidgetItem([child.description or "(설명 없음)"])
+                child_node.setData(0, ITEM_ROLE, child)
+                node.addChild(child_node)
+                if child is select_item:
+                    to_select = child_node
+            node.setExpanded(True)
+        self._loading = was_loading
+        if to_select:
+            self.item_tree.setCurrentItem(to_select)
 
     def _on_item_selected(self, *_):
         if self._loading:
@@ -214,17 +264,29 @@ class PresetPage(QWidget):
         self._load_item_form()
 
     def _load_item_form(self) -> None:
-        entry = self.item_list.currentItem()
-        self.current_item = entry.data(ITEM_ROLE) if entry else None
+        node = self.item_tree.currentItem()
+        self.current_item = node.data(0, ITEM_ROLE) if node else None
         has_item = self.current_item is not None
         self.item_form_frame.setVisible(has_item)
         if not has_item:
             return
         self._loading = True
         self.item_desc_edit.setText(self.current_item.description)
-        for code, edit in self.path_edits.items():
-            edit.setText(self.current_item.paths.get(code, ""))
+        for code in COUNTRIES:
+            path = self.current_item.paths.get(code, {})
+            self.folder_edits[code].setText(path.get("folder", ""))
+            self.file_edits[code].setText(path.get("file", ""))
         self._loading = False
+
+    # ---- 항목 트리 헬퍼 ----
+    def _find_parent_list(self, item: PresetItem) -> list | None:
+        """항목이 속한 리스트(최상위 또는 부모의 children)를 찾는다."""
+        if item in self.current_preset.items:
+            return self.current_preset.items
+        for top in self.current_preset.items:
+            if item in top.children:
+                return top.children
+        return None
 
     # ---- 편집 동작 (모두 즉시 저장) ----
     def _on_meta_edited(self) -> None:
@@ -232,9 +294,7 @@ class PresetPage(QWidget):
             return
         self.current_preset.name = self.name_edit.text().strip() or "이름 없는 프리셋"
         self.current_preset.description = self.desc_edit.text()
-        entry = self.preset_list.currentItem()
-        if entry:
-            entry.setText(f"{self.current_preset.name}  ({len(self.current_preset.items)})")
+        self._update_current_count()
         self.storage.save()
         self.presetsChanged.emit()
 
@@ -242,56 +302,100 @@ class PresetPage(QWidget):
         if self._loading or not self.current_item:
             return
         self.current_item.description = text
-        entry = self.item_list.currentItem()
-        if entry:
-            entry.setText(text or "(설명 없음)")
+        node = self.item_tree.currentItem()
+        if node:
+            node.setText(0, text or "(설명 없음)")
         self.storage.save()
 
-    def _on_item_path_edited(self, code: str, text: str) -> None:
+    def _on_item_path_edited(self, code: str, key: str, text: str) -> None:
         if self._loading or not self.current_item:
             return
-        self.current_item.paths[code] = text
+        self.current_item.paths.setdefault(code, {"folder": "", "file": ""})[key] = text
         self.storage.save()
 
-    def _browse(self, code: str, folder: bool) -> None:
-        if folder:
-            path = QFileDialog.getExistingDirectory(self, "폴더 선택")
-        else:
-            path, _ = QFileDialog.getOpenFileName(self, "파일 선택")
+    def _browse_folder(self, code: str) -> None:
+        path = QFileDialog.getExistingDirectory(self, "폴더 선택")
         if path and self.current_item:
-            self.path_edits[code].setText(path)
-            self.current_item.paths[code] = path
+            self.folder_edits[code].setText(path)
+            self.current_item.paths.setdefault(code, {})["folder"] = path
             self.storage.save()
 
-    def _on_rows_moved(self, *_):
-        if not self.current_preset:
-            return
-        self.current_preset.items = [
-            self.item_list.item(i).data(ITEM_ROLE) for i in range(self.item_list.count())
-        ]
-        self.storage.save()
+    def _browse_file(self, code: str) -> None:
+        """파일을 고르면 폴더/파일 칸이 자동으로 나뉘어 채워진다."""
+        path, _ = QFileDialog.getOpenFileName(self, "파일 선택")
+        if path and self.current_item:
+            from pathlib import Path
+
+            p = Path(path)
+            self.folder_edits[code].setText(str(p.parent))
+            self.file_edits[code].setText(p.name)
+            entry = self.current_item.paths.setdefault(code, {})
+            entry["folder"] = str(p.parent)
+            entry["file"] = p.name
+            self.storage.save()
 
     def _add_item(self) -> None:
         if not self.current_preset:
             return
         item = PresetItem(description="새 작업")
         self.current_preset.items.append(item)
-        entry = self._append_item_entry(item)
-        self.item_list.setCurrentItem(entry)
         self.storage.save()
+        self._rebuild_tree(select_item=item)
         self._update_current_count()
         self.item_desc_edit.setFocus()
         self.item_desc_edit.selectAll()
 
-    def _delete_item(self) -> None:
-        entry = self.item_list.currentItem()
-        if not entry or not self.current_preset:
+    def _add_child_item(self) -> None:
+        if not self.current_preset or not self.current_item:
+            QMessageBox.information(self, "하위 항목", "먼저 상위 항목을 선택해주세요.")
             return
-        item = entry.data(ITEM_ROLE)
-        self.current_preset.items.remove(item)
-        self.item_list.takeItem(self.item_list.row(entry))
+        parent = self.current_item
+        # 선택된 게 하위 항목이면 그 부모 밑에 추가 (깊이 1단계 제한)
+        if parent not in self.current_preset.items:
+            for top in self.current_preset.items:
+                if parent in top.children:
+                    parent = top
+                    break
+        child = PresetItem(description="새 하위 작업")
+        parent.children.append(child)
         self.storage.save()
+        self._rebuild_tree(select_item=child)
+        self.item_desc_edit.setFocus()
+        self.item_desc_edit.selectAll()
+
+    def _move_item(self, delta: int) -> None:
+        if not self.current_item:
+            return
+        siblings = self._find_parent_list(self.current_item)
+        if siblings is None:
+            return
+        index = siblings.index(self.current_item)
+        new_index = index + delta
+        if not 0 <= new_index < len(siblings):
+            return
+        siblings[index], siblings[new_index] = siblings[new_index], siblings[index]
+        self.storage.save()
+        self._rebuild_tree(select_item=self.current_item)
+
+    def _delete_item(self) -> None:
+        if not self.current_item or not self.current_preset:
+            return
+        item = self.current_item
+        if item.children:
+            answer = QMessageBox.question(
+                self, "항목 삭제", "하위 항목도 함께 삭제됩니다. 삭제할까요?"
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        siblings = self._find_parent_list(item)
+        if siblings is None:
+            return
+        siblings.remove(item)
+        self.current_item = None
+        self.storage.save()
+        self._rebuild_tree()
         self._update_current_count()
+        self._load_item_form()
 
     def _update_current_count(self) -> None:
         entry = self.preset_list.currentItem()

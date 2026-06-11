@@ -24,8 +24,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..dialogs import ResourcePickerDialog
 from ..models import COUNTRIES, Preset, PresetItem, new_id
 from ..storage import Storage
+from ..utils import strip_base
 
 ITEM_ROLE = Qt.ItemDataRole.UserRole
 
@@ -170,6 +172,11 @@ class PresetPage(QWidget):
         common_file_btn.setProperty("small", True)
         common_file_btn.clicked.connect(self._browse_common_file)
         common_grid.addWidget(common_file_btn, 1, 3)
+        resource_btn = QPushButton("리소스")
+        resource_btn.setProperty("small", True)
+        resource_btn.setToolTip("리소스 경로 탭에 등록된 경로 불러오기")
+        resource_btn.clicked.connect(self._pick_resource)
+        common_grid.addWidget(resource_btn, 1, 4)
         common_grid.setColumnStretch(0, 3)
         common_grid.setColumnStretch(2, 2)
         form_layout.addWidget(self.common_host)
@@ -378,23 +385,10 @@ class PresetPage(QWidget):
         setattr(self.current_item, key, text)
         self.storage.save()
 
-    def _strip_base(self, path: str) -> str:
-        """선택한 절대 경로가 설정의 기본 폴더 아래면 상대 경로로 줄여준다."""
-        normalized = path.replace("\\", "/").lower().rstrip("/")
-        for base in self.storage.base_paths().values():
-            if not base:
-                continue
-            base_norm = base.replace("\\", "/").lower().rstrip("/")
-            if normalized == base_norm:
-                return ""
-            if normalized.startswith(base_norm + "/"):
-                return path[len(base):].strip("/\\")
-        return path
-
     def _browse_common_folder(self) -> None:
         path = QFileDialog.getExistingDirectory(self, "폴더 선택")
         if path and self.current_item:
-            rel = self._strip_base(path)
+            rel = strip_base(path, self.storage.base_paths())
             self.common_folder_edit.setText(rel)
             self.current_item.folder = rel
             self.storage.save()
@@ -406,11 +400,30 @@ class PresetPage(QWidget):
             from pathlib import Path
 
             p = Path(path)
-            rel = self._strip_base(str(p.parent))
+            rel = strip_base(str(p.parent), self.storage.base_paths())
             self.common_folder_edit.setText(rel)
             self.common_file_edit.setText(p.name)
             self.current_item.folder = rel
             self.current_item.file = p.name
+            self.storage.save()
+
+    def _pick_resource(self) -> None:
+        """리소스 경로 탭에 등록된 경로를 골라서 항목 경로로 넣는다."""
+        if not self.current_item:
+            return
+        if not self.storage.resources:
+            QMessageBox.information(
+                self, "리소스 없음",
+                "리소스 경로 탭에 등록된 항목이 없습니다.\n먼저 리소스 경로를 등록해주세요.",
+            )
+            return
+        dialog = ResourcePickerDialog(self.storage.resources, self)
+        if dialog.exec() and dialog.selected():
+            res = dialog.selected()
+            self.common_folder_edit.setText(res.folder)
+            self.common_file_edit.setText(res.file)
+            self.current_item.folder = res.folder
+            self.current_item.file = res.file
             self.storage.save()
 
     def _browse_folder(self, code: str) -> None:

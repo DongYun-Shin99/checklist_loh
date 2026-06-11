@@ -50,6 +50,20 @@ def combined_path(folder: str, file: str) -> str:
     return folder or file
 
 
+def strip_base(path: str, base_paths: dict) -> str:
+    """절대 경로가 기본 폴더 아래면 상대 경로로 줄여준다. 아니면 그대로."""
+    normalized = path.replace("\\", "/").rstrip("/").lower()
+    for base in base_paths.values():
+        if not base:
+            continue
+        base_norm = base.replace("\\", "/").rstrip("/").lower()
+        if normalized == base_norm:
+            return ""
+        if normalized.startswith(base_norm + "/"):
+            return path[len(base):].strip("/\\")
+    return path
+
+
 def path_display(folder: str, file: str) -> str:
     """항목 행에 표시할 경로 텍스트."""
     parts = []

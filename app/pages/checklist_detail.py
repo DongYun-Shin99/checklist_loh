@@ -24,7 +24,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..models import Checklist, ChecklistItem, Patch
+from ..dialogs import ResourcePickerDialog
+from ..models import Checklist, ChecklistItem, Patch, join_base
 from ..storage import Storage
 from ..utils import combined_path, dday_info, open_in_explorer, path_display
 from ..widgets import country_badge
@@ -39,8 +40,11 @@ class ChecklistItemDialog(QDialog):
         item: ChecklistItem | None = None,
         title: str = "",
         base_folder: str = "",
+        resources: list | None = None,
     ):
         super().__init__(parent)
+        self._base_folder = base_folder
+        self._resources = resources or []
         self.setWindowTitle(title or ("항목 수정" if item else "항목 추가"))
         self.setMinimumWidth(480)
 
@@ -66,6 +70,12 @@ class ChecklistItemDialog(QDialog):
         folder_btn.setProperty("small", True)
         folder_btn.clicked.connect(self._browse_folder)
         folder_row.addWidget(folder_btn)
+        if self._resources:
+            resource_btn = QPushButton("리소스")
+            resource_btn.setProperty("small", True)
+            resource_btn.setToolTip("리소스 경로 탭에 등록된 경로 불러오기 (이 패치의 빌드로 연결)")
+            resource_btn.clicked.connect(self._pick_resource)
+            folder_row.addWidget(resource_btn)
         form.addRow("폴더 경로", folder_row)
 
         file_row = QHBoxLayout()
@@ -101,6 +111,14 @@ class ChecklistItemDialog(QDialog):
             p = Path(path)
             self.folder_edit.setText(str(p.parent))
             self.file_edit.setText(p.name)
+
+    def _pick_resource(self) -> None:
+        """리소스 경로를 골라 이 패치의 빌드(기본 폴더)에 맞는 경로로 넣는다."""
+        dialog = ResourcePickerDialog(self._resources, self)
+        if dialog.exec() and dialog.selected():
+            res = dialog.selected()
+            self.folder_edit.setText(join_base(self._base_folder, res.folder))
+            self.file_edit.setText(res.file)
 
     def _on_accept(self) -> None:
         if not self.desc_edit.text().strip():
@@ -349,7 +367,10 @@ class ChecklistDetailPage(QWidget):
         return self.storage.base_paths().get(self.patch.country, "") if self.patch else ""
 
     def _add_item(self) -> None:
-        dialog = ChecklistItemDialog(self, title="항목 추가", base_folder=self._base_folder())
+        dialog = ChecklistItemDialog(
+            self, title="항목 추가",
+            base_folder=self._base_folder(), resources=self.storage.resources,
+        )
         if dialog.exec():
             desc, folder, file = dialog.result_values()
             self.checklist.items.append(
@@ -371,12 +392,16 @@ class ChecklistDetailPage(QWidget):
         if chosen is None:
             return
         if chosen == edit_action:
-            dialog = ChecklistItemDialog(self, item=item, base_folder=self._base_folder())
+            dialog = ChecklistItemDialog(
+                self, item=item,
+                base_folder=self._base_folder(), resources=self.storage.resources,
+            )
             if dialog.exec():
                 item.description, item.folder, item.file = dialog.result_values()
         elif child_action and chosen == child_action:
             dialog = ChecklistItemDialog(
-                self, title="하위 항목 추가", base_folder=self._base_folder()
+                self, title="하위 항목 추가",
+                base_folder=self._base_folder(), resources=self.storage.resources,
             )
             if dialog.exec():
                 desc, folder, file = dialog.result_values()

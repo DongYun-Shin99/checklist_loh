@@ -7,6 +7,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
@@ -23,18 +24,22 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..models import ResourceEntry
+from ..models import COUNTRIES, ResourceEntry, join_base
 from ..storage import Storage
-from ..utils import combined_path, open_in_explorer
+from ..utils import combined_path, open_in_explorer, strip_base
 
 ENTRY_ROLE = Qt.ItemDataRole.UserRole
 
 
 class ResourceDialog(QDialog):
-    """리소스 경로 추가/수정 다이얼로그 (폴더/파일 분리 입력)."""
+    """리소스 경로 추가/수정 다이얼로그.
 
-    def __init__(self, parent=None, entry: ResourceEntry | None = None):
+    폴더는 설정의 기본 폴더 아래 상대 경로로 입력하면 빌드(국가)별로 자동 연결된다.
+    """
+
+    def __init__(self, storage: Storage, parent=None, entry: ResourceEntry | None = None):
         super().__init__(parent)
+        self.storage = storage
         self.setWindowTitle("리소스 경로 수정" if entry else "리소스 경로 추가")
         self.setMinimumWidth(500)
 
@@ -48,7 +53,7 @@ class ResourceDialog(QDialog):
 
         folder_row = QHBoxLayout()
         self.folder_edit = QLineEdit(entry.folder if entry else "")
-        self.folder_edit.setPlaceholderText("폴더 경로")
+        self.folder_edit.setPlaceholderText("상대 경로 (예: Assets\\Textures) — 절대 경로도 가능")
         folder_row.addWidget(self.folder_edit, 1)
         folder_btn = QPushButton("폴더")
         folder_btn.setProperty("small", True)
@@ -81,14 +86,14 @@ class ResourceDialog(QDialog):
     def _browse_folder(self) -> None:
         path = QFileDialog.getExistingDirectory(self, "폴더 선택")
         if path:
-            self.folder_edit.setText(path)
+            self.folder_edit.setText(strip_base(path, self.storage.base_paths()))
 
     def _browse_file(self) -> None:
-        """파일을 고르면 폴더/파일 칸이 자동으로 나뉘어 채워진다."""
+        """파일을 고르면 폴더(기본 폴더 아래면 상대 경로로)/파일 칸이 자동으로 나뉜다."""
         path, _ = QFileDialog.getOpenFileName(self, "파일 선택")
         if path:
             p = Path(path)
-            self.folder_edit.setText(str(p.parent))
+            self.folder_edit.setText(strip_base(str(p.parent), self.storage.base_paths()))
             self.file_edit.setText(p.name)
 
     def _on_accept(self) -> None:
@@ -121,9 +126,23 @@ class ResourcePage(QWidget):
         title.setProperty("h1", True)
         layout.addWidget(title)
 
-        subtitle = QLabel("아이콘 등 자주 쓰는 리소스의 폴더/파일 바로가기. 더블클릭으로 폴더를 엽니다.")
+        subtitle = QLabel(
+            "상대 경로로 등록하면 아래 '기준 빌드'의 기본 폴더(설정 탭)와 조합해서 열립니다.\n"
+            "예: Assets\\Textures → 한국 선택 시 KR 트렁크의 Assets\\Textures가 열림"
+        )
         subtitle.setProperty("muted", True)
         layout.addWidget(subtitle)
+
+        country_row = QHBoxLayout()
+        country_label = QLabel("기준 빌드:")
+        country_row.addWidget(country_label)
+        self.country_combo = QComboBox()
+        for code, country_name in COUNTRIES.items():
+            self.country_combo.addItem(country_name, code)
+        self.country_combo.currentIndexChanged.connect(lambda *_: self.refresh())
+        country_row.addWidget(self.country_combo)
+        country_row.addStretch()
+        layout.addLayout(country_row)
 
         body = QHBoxLayout()
         body.setSpacing(12)
@@ -170,17 +189,24 @@ class ResourcePage(QWidget):
         self.empty_label.setProperty("muted", True)
         layout.addWidget(self.empty_label)
 
+    def _resolved_folder(self, entry: ResourceEntry) -> str:
+        """기준 빌드의 기본 폴더 + 상대 경로 (절대 경로면 그대로)."""
+        country = self.country_combo.currentData()
+        return join_base(self.storage.base_paths().get(country, ""), entry.folder)
+
     def refresh(self) -> None:
         self.tree.clear()
         self.empty_label.setVisible(not self.storage.resources)
         for entry in self.storage.resources:
-            exists = os.path.exists(combined_path(entry.folder, entry.file))
+            resolved = self._resolved_folder(entry)
+            exists = os.path.exists(combined_path(resolved, entry.file))
             row = QTreeWidgetItem([
                 entry.name,
                 entry.folder + ("" if exists else "   ⚠ 경로 없음"),
                 entry.file,
             ])
             row.setData(0, ENTRY_ROLE, entry)
+            row.setToolTip(1, resolved)
             if not exists:
                 row.setForeground(1, QBrush(QColor("#dc2626")))
             self.tree.addTopLevelItem(row)
@@ -191,7 +217,7 @@ class ResourcePage(QWidget):
 
     # ---- 동작 ----
     def _add_entry(self) -> None:
-        dialog = ResourceDialog(self)
+        dialog = ResourceDialog(self.storage, self)
         if dialog.exec():
             name, folder, file = dialog.result_values()
             self.storage.resources.append(
@@ -205,7 +231,7 @@ class ResourcePage(QWidget):
         if not entry:
             QMessageBox.information(self, "항목 수정", "수정할 항목을 먼저 선택해주세요.")
             return
-        dialog = ResourceDialog(self, entry)
+        dialog = ResourceDialog(self.storage, self, entry)
         if dialog.exec():
             entry.name, entry.folder, entry.file = dialog.result_values()
             self.storage.save()
@@ -226,7 +252,7 @@ class ResourcePage(QWidget):
         entry = self._selected_entry()
         if not entry:
             return
-        full = combined_path(entry.folder, entry.file)
+        full = combined_path(self._resolved_folder(entry), entry.file)
         if not os.path.exists(full):
             QMessageBox.warning(self, "경로 없음", f"경로가 존재하지 않습니다:\n{full}")
             return

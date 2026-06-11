@@ -124,8 +124,8 @@ def build_sample(storage: Storage) -> None:
     storage.patches.extend([kr_patch, jp_patch, *done_patches])
 
     storage.resources.extend([
-        ResourceEntry(name="영웅 아이콘", folder="/tmp", file=""),
-        ResourceEntry(name="배너 일러스트", folder="/tmp/build/kor/banners", file="banner.png"),
+        ResourceEntry(name="영웅 아이콘", folder="Assets/Textures", file=""),
+        ResourceEntry(name="배너 일러스트", folder="Assets/Banners", file="banner.png"),
         ResourceEntry(name="사운드 리소스", folder="/없는/경로/sounds", file=""),
     ])
     storage.save()
@@ -215,6 +215,9 @@ def main() -> int:
         assert first.checklists[0].items[0].children[0].description == "상시 소환 수정"
         assert first.checklists[2].preset_name == ""  # 즉석 체크리스트
         assert reloaded.resources[1].file == "banner.png"
+        assert reloaded.resources[0].folder == "Assets/Textures"  # 리소스도 상대 경로
+        # 리소스 상대 경로 → 빌드별 기본 폴더로 해석
+        assert join_base(reloaded.base_paths()["KR"], reloaded.resources[0].folder) == "/tmp/Assets/Textures"
 
         # 구버전 데이터 호환 확인
         old_item = ChecklistItem.from_dict({"description": "옛 항목", "path": "/old/path"})

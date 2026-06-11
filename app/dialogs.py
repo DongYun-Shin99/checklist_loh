@@ -3,14 +3,17 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from PySide6.QtCore import QDate
+from PySide6.QtCore import QDate, Qt
 from PySide6.QtWidgets import (
     QComboBox,
     QDateEdit,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QRadioButton,
     QTextBrowser,
     QVBoxLayout,
@@ -158,6 +161,42 @@ class AddChecklistDialog(QDialog):
         default = preset.name if preset else "새 체크리스트"
         name = self.name_edit.text().strip() or default
         return preset, name
+
+
+class ResourcePickerDialog(QDialog):
+    """저장된 리소스 경로 중 하나를 골라 항목 경로로 넣는 팝업."""
+
+    def __init__(self, resources: list, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("리소스 경로에서 선택")
+        self.resize(520, 380)
+        self._resources = resources
+
+        layout = QVBoxLayout(self)
+        hint = QLabel("리소스 경로 탭에 등록된 항목입니다. 더블클릭 또는 선택 후 [선택].")
+        hint.setProperty("muted", True)
+        layout.addWidget(hint)
+
+        self.list = QListWidget()
+        for res in resources:
+            path_text = res.folder + (f"  📄 {res.file}" if res.file else "")
+            entry = QListWidgetItem(f"{res.name}\n    {path_text}")
+            entry.setData(Qt.ItemDataRole.UserRole, res)
+            self.list.addItem(entry)
+        self.list.itemDoubleClicked.connect(lambda *_: self.accept())
+        layout.addWidget(self.list, 1)
+
+        buttons = _ok_cancel("선택")
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        if self.list.count():
+            self.list.setCurrentRow(0)
+
+    def selected(self):
+        entry = self.list.currentItem()
+        return entry.data(Qt.ItemDataRole.UserRole) if entry else None
 
 
 class ArchiveViewDialog(QDialog):
